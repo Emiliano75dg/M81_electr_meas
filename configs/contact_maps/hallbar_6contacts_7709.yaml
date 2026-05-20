@@ -1,0 +1,42 @@
+name: hallbar_6contacts_7709
+contacts:
+  source: {column: 1}
+  vxx_p: {column: 2}
+  vxy_p: {column: 3}
+  vxy_m: {column: 4}
+  vxx_m: {column: 5}
+  drain: {column: 6}
+instruments:
+  current_source:
+    row_hi: 3
+    row_lo: 4
+    instrument: M81:S1
+  vxx_meter:
+    row_hi: 5
+    row_lo: 6
+    instrument: M81:M1
+  vxy_meter:
+    row_hi: 1
+    row_lo: 2
+    instrument: M81:M2
+states:
+  hallbar_forward:
+    type: hallbar
+    group: longitudinal
+    current: [source, drain]
+    voltage_longitudinal: [vxx_p, vxx_m]
+    voltage_transverse: [vxy_p, vxy_m]
+    reciprocal: hallbar_reciprocal
+    reverse_current: hallbar_reverse_current
+  hallbar_reverse_current:
+    type: hallbar
+    group: longitudinal
+    current: [drain, source]
+    voltage_longitudinal: [vxx_p, vxx_m]
+    voltage_transverse: [vxy_p, vxy_m]
+  hallbar_reciprocal:
+    type: reciprocity
+    group: reciprocity
+    current: [vxx_p, vxx_m]
+    voltage: [source, drain]
+    reciprocal: hallbar_forward

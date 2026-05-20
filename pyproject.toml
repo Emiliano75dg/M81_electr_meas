@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "electrical_measurements"
+version = "0.1.0"
+description = "Framework for electrical measurements versus temperature and magnetic field."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "OpenAI Codex"}]
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "scipy>=1.13",
+  "PyYAML>=6.0",
+  "pyvisa>=1.14",
+]
+
+[project.optional-dependencies]
+hardware = ["lakeshore>=1.9"]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+electrical-measure = "electrical_measurements.runners.run_measurement:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

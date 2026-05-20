@@ -1,0 +1,74 @@
+{
+  "driver_versions": {
+    "git_commit": null
+  },
+  "finished_at": "2026-05-20T12:47:10.607940+00:00",
+  "geometry": "hallbar_6contacts_7709",
+  "instruments": {
+    "daq6510": {
+      "enabled": true,
+      "resource": "MOCK::DAQ6510",
+      "settle_s": 0.05
+    },
+    "environment": {
+      "endpoint": "http://localhost:8000",
+      "kind": "mock",
+      "mode": "integrated"
+    },
+    "m81": {
+      "connection": {
+        "kind": "mock"
+      },
+      "enabled": true
+    }
+  },
+  "mapping_contacts": {
+    "drain": {
+      "column": 6
+    },
+    "source": {
+      "column": 1
+    },
+    "vxx_m": {
+      "column": 5
+    },
+    "vxx_p": {
+      "column": 2
+    },
+    "vxy_m": {
+      "column": 4
+    },
+    "vxy_p": {
+      "column": 3
+    }
+  },
+  "mapping_relay": {
+    "hallbar_forward": [
+      17,
+      30,
+      34,
+      45,
+      3,
+      12
+    ],
+    "hallbar_reciprocal": [
+      18,
+      29,
+      33,
+      46
+    ],
+    "hallbar_reverse_current": [
+      22,
+      25,
+      34,
+      45,
+      3,
+      12
+    ]
+  },
+  "notes": null,
+  "sample_id": "demo-sample",
+  "started_at": "2026-05-20T12:47:10.607929+00:00",
+  "user": null,
+  "yaml_file": "configs/contact_maps/hallbar_6contacts_7709.yaml"
+}

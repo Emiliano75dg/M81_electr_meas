@@ -1,0 +1,22 @@
+name: second_harmonic_7709
+contacts:
+  source: {column: 1}
+  drain: {column: 6}
+  vxy_p: {column: 3}
+  vxy_m: {column: 4}
+instruments:
+  current_source:
+    row_hi: 3
+    row_lo: 4
+    instrument: M81:S1
+  harmonic_meter:
+    row_hi: 1
+    row_lo: 2
+    instrument: M81:M2
+states:
+  second_harmonic_vxy:
+    type: second_harmonic
+    group: second_harmonic
+    current: [source, drain]
+    voltage: [vxy_p, vxy_m]
+

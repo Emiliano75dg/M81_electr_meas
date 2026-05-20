@@ -1,0 +1,53 @@
+name: vdp_4contacts_7709
+contacts:
+  A: {column: 1}
+  B: {column: 2}
+  C: {column: 3}
+  D: {column: 4}
+instruments:
+  current_source:
+    row_hi: 3
+    row_lo: 4
+    instrument: M81:S1
+  voltage_meter:
+    row_hi: 5
+    row_lo: 6
+    instrument: M81:M1
+states:
+  I_AB_V_CD:
+    type: resistance
+    group: vdp
+    current: [A, B]
+    voltage: [C, D]
+    reciprocal: I_CD_V_AB
+    reverse_current: I_BA_V_CD
+  I_BA_V_CD:
+    type: resistance
+    group: vdp
+    current: [B, A]
+    voltage: [C, D]
+  I_CD_V_AB:
+    type: resistance
+    group: vdp
+    current: [C, D]
+    voltage: [A, B]
+    reciprocal: I_AB_V_CD
+    reverse_current: I_DC_V_AB
+  I_DC_V_AB:
+    type: resistance
+    group: vdp
+    current: [D, C]
+    voltage: [A, B]
+  I_BC_V_DA:
+    type: resistance
+    group: vdp
+    current: [B, C]
+    voltage: [D, A]
+    reciprocal: I_DA_V_BC
+  I_DA_V_BC:
+    type: resistance
+    group: vdp
+    current: [D, A]
+    voltage: [B, C]
+    reciprocal: I_BC_V_DA
+
