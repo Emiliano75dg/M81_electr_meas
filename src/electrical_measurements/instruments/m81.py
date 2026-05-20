@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from .m81_scpi_fallback import M81SCPIFallback
+from ..exceptions import HardwareError, InstrumentConfigError, InstrumentConnectionError
 
 LOGGER = logging.getLogger(__name__)
 VALID_MEASURE_MODES = {"auto", "dc", "lockin"}
@@ -32,9 +33,30 @@ class SourceConfig:
 
 
 class M81Controller:
-    """High-level wrapper around the official Lake Shore driver."""
+    """High-level wrapper for the official Lake Shore M81-SSM driver.
+
+    This class abstracts the low-level operations of the `lakeshore` driver,
+    providing an interface oriented towards electrical measurements. It manages the
+    configuration of sources (DC/AC, current/voltage) and measurement channels
+    (DC/Lock-in), maintaining an internal state of the applied configurations.
+
+    It also offers methods to resolve "preferred" configurations (from YAML files)
+    against those requested at runtime, and handles data streaming for
+    ramped measurements.
+
+    Attributes:
+        system: The `lakeshore.SSMSystem` driver instance or a mock.
+        config (dict): The 'm81' configuration portion from the YAML file.
+        scpi (M81SCPIFallback): A fallback interface for direct SCPI commands.
+    """
 
     def __init__(self, system: Any, config: dict[str, Any] | None = None) -> None:
+        """Initializes the M81 controller.
+
+        Args:
+            system: The `SSMSystem` driver object or a compatible mock.
+            config: The configuration dictionary for the M81.
+        """
         self.system = system
         self.config = config or {}
         self._sources: dict[str, Any] = {}
@@ -54,21 +76,40 @@ class M81Controller:
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "M81Controller":
+        """Creates an M81Controller instance from the project configuration.
+
+        It interprets the `instruments.m81` section of the YAML configuration file
+        to establish a connection with the instrument (USB, VISA, TCP, etc.).
+
+        Args:
+            config: The complete project configuration dictionary.
+
+        Returns:
+            An M81Controller instance connected to the instrument.
+
+        Raises:
+            InstrumentConfigError: If the connection type is not supported or
+                if the `lakeshore` package is not installed.
+            InstrumentConnectionError: If the connection to the instrument fails.
+        """
         instrument_cfg = config.get("instruments", {}).get("m81", config.get("m81", {}))
         connection_cfg = instrument_cfg.get("connection", {})
         if SSMSystem is None:
-            raise RuntimeError("The lakeshore package is not installed. Install it with `pip install lakeshore`.")
+            raise InstrumentConfigError("The lakeshore package is not installed. Install it with `pip install lakeshore`.")
         kind = connection_cfg.get("kind", "usb").lower()
-        if kind == "usb":
-            system = SSMSystem()
-        elif kind in {"visa", "tcp", "gpib"}:
-            import pyvisa
+        try:
+            if kind == "usb":
+                system = SSMSystem()
+            elif kind in {"visa", "tcp", "gpib"}:
+                import pyvisa
 
-            resource = connection_cfg["resource"]
-            rm = pyvisa.ResourceManager()
-            system = SSMSystem(connection=rm.open_resource(resource))
-        else:
-            raise ValueError(f"Unsupported M81 connection kind: {kind}")
+                resource = connection_cfg["resource"]
+                rm = pyvisa.ResourceManager()
+                system = SSMSystem(connection=rm.open_resource(resource))
+            else:
+                raise InstrumentConfigError(f"Unsupported M81 connection kind: {kind}")
+        except Exception as e:
+            raise InstrumentConnectionError(f"Failed to connect to M81 via {kind}: {e}") from e
         return cls(system=system, config=instrument_cfg)
 
     def _discover_modules(self) -> None:
@@ -78,11 +119,14 @@ class M81Controller:
             try:
                 self._sources[source_name] = self.system.get_source_module(idx)
                 self._source_state[source_name] = SourceConfig()
-            except Exception:
+            except Exception:  # noqa: S110
+                LOGGER.debug("Source module S%d not found.", idx)
                 continue
             try:
                 self._measures[measure_name] = self.system.get_measure_module(idx)
-            except Exception:
+                LOGGER.debug("Measure module M%d found.", idx)
+            except Exception:  # noqa: S110
+                LOGGER.debug("Measure module M%d not found.", idx)
                 continue
 
     def _load_measure_mode_preferences(self) -> None:
@@ -120,13 +164,13 @@ class M81Controller:
     def set_preferred_measure_mode(self, measure_channel: str, mode: str) -> None:
         normalized = str(mode).strip().lower()
         if normalized not in VALID_MEASURE_MODES:
-            raise ValueError(f"Unsupported measure mode for {measure_channel}: {mode}")
+            raise InstrumentConfigError(f"Unsupported measure mode for {measure_channel}: {mode}. Valid modes are {VALID_MEASURE_MODES}")
         self._preferred_measure_modes[measure_channel] = normalized
 
     def set_preferred_measure_harmonic(self, measure_channel: str, harmonic: int) -> None:
         parsed = int(harmonic)
         if parsed < 1:
-            raise ValueError(f"Unsupported measure harmonic for {measure_channel}: {harmonic}")
+            raise InstrumentConfigError(f"Unsupported measure harmonic for {measure_channel}: {harmonic}. Must be >= 1.")
         self._preferred_measure_harmonics[measure_channel] = parsed
 
     def get_preferred_measure_harmonic(self, measure_channel: str) -> int | None:
@@ -135,26 +179,26 @@ class M81Controller:
     def set_preferred_measure_nplc(self, measure_channel: str, nplc: float) -> None:
         parsed = float(nplc)
         if parsed <= 0:
-            raise ValueError(f"Unsupported measure nplc for {measure_channel}: {nplc}")
+            raise InstrumentConfigError(f"Unsupported measure nplc for {measure_channel}: {nplc}. Must be > 0.")
         self._preferred_measure_nplc[measure_channel] = parsed
 
     def set_preferred_measure_time_constant(self, measure_channel: str, time_constant_s: float) -> None:
         parsed = float(time_constant_s)
         if parsed <= 0:
-            raise ValueError(f"Unsupported measure time constant for {measure_channel}: {time_constant_s}")
+            raise InstrumentConfigError(f"Unsupported measure time constant for {measure_channel}: {time_constant_s}. Must be > 0.")
         self._preferred_measure_time_constants[measure_channel] = parsed
 
     def set_preferred_measure_rolloff(self, measure_channel: str, rolloff: str) -> None:
         normalized = str(rolloff).strip().upper()
         if normalized not in VALID_LOCKIN_ROLLOFFS:
-            raise ValueError(f"Unsupported measure rolloff for {measure_channel}: {rolloff}")
+            raise InstrumentConfigError(f"Unsupported measure rolloff for {measure_channel}: {rolloff}. Valid rolloffs are {VALID_LOCKIN_ROLLOFFS}")
         self._preferred_measure_rolloffs[measure_channel] = normalized
 
     def resolve_measure_harmonic(self, measure_channel: str, requested_harmonic: int | None = None) -> int:
         if requested_harmonic is not None:
             parsed = int(requested_harmonic)
             if parsed < 1:
-                raise ValueError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}")
+                raise InstrumentConfigError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}. Must be >= 1.")
             return parsed
         preferred_harmonic = self._preferred_measure_harmonics.get(measure_channel)
         if isinstance(preferred_harmonic, int) and preferred_harmonic >= 1:
@@ -167,7 +211,7 @@ class M81Controller:
     def resolve_measure_mode(self, measure_channel: str, requested_mode: str = "auto") -> str:
         normalized = str(requested_mode).strip().lower()
         if normalized not in VALID_MEASURE_MODES:
-            raise ValueError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}")
+            raise InstrumentConfigError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}. Valid modes are {VALID_MEASURE_MODES}")
         if normalized != "auto":
             return normalized
         preferred_mode = self._preferred_measure_modes.get(measure_channel, "auto")
@@ -182,7 +226,7 @@ class M81Controller:
         if requested_nplc is not None:
             parsed = float(requested_nplc)
             if parsed <= 0:
-                raise ValueError(f"Unsupported requested nplc for {measure_channel}: {requested_nplc}")
+                raise InstrumentConfigError(f"Unsupported requested nplc for {measure_channel}: {requested_nplc}. Must be > 0.")
             return parsed
         preferred_nplc = self._preferred_measure_nplc.get(measure_channel)
         if isinstance(preferred_nplc, (int, float)) and float(preferred_nplc) > 0:
@@ -196,7 +240,7 @@ class M81Controller:
         if requested_time_constant_s is not None:
             parsed = float(requested_time_constant_s)
             if parsed <= 0:
-                raise ValueError(f"Unsupported requested time constant for {measure_channel}: {requested_time_constant_s}")
+                raise InstrumentConfigError(f"Unsupported requested time constant for {measure_channel}: {requested_time_constant_s}. Must be > 0.")
             return parsed
         preferred_time_constant_s = self._preferred_measure_time_constants.get(measure_channel)
         if isinstance(preferred_time_constant_s, (int, float)) and float(preferred_time_constant_s) > 0:
@@ -210,7 +254,7 @@ class M81Controller:
         if requested_rolloff is not None:
             normalized = str(requested_rolloff).strip().upper()
             if normalized not in VALID_LOCKIN_ROLLOFFS:
-                raise ValueError(f"Unsupported requested rolloff for {measure_channel}: {requested_rolloff}")
+                raise InstrumentConfigError(f"Unsupported requested rolloff for {measure_channel}: {requested_rolloff}. Valid rolloffs are {VALID_LOCKIN_ROLLOFFS}")
             return normalized
         preferred_rolloff = self._preferred_measure_rolloffs.get(measure_channel)
         if isinstance(preferred_rolloff, str):
@@ -225,48 +269,72 @@ class M81Controller:
         return "R24"
 
     def get_source_module(self, source: str) -> Any:
-        return self._sources[source]
+        try:
+            return self._sources[source]
+        except KeyError:
+            raise InstrumentConfigError(f"Source module '{source}' not found or configured on M81.") from None
 
     def get_measure_module(self, measure_channel: str) -> Any:
-        return self._measures[measure_channel]
+        try:
+            return self._measures[measure_channel]
+        except KeyError:
+            raise InstrumentConfigError(f"Measure module '{measure_channel}' not found or configured on M81.") from None
 
     def configure_dc_current(self, source: str, current_a: float, compliance_v: float = 1.0, autorange: bool = True) -> None:
+        """Configures a source module to output a DC current.
+
+        Args:
+            source: The name of the source module (e.g., "S1").
+            current_a: The DC current value in Amperes.
+            compliance_v: The compliance voltage in Volts.
+            autorange: Whether to enable source autoranging.
+
+        Raises:
+            InstrumentConfigError: If the source module does not exist.
+            HardwareError: If the instrument configuration fails.
+        """
         module = self.get_source_module(source)
-        if hasattr(module, "go_to_current_mode"):
-            module.go_to_current_mode()
-        if hasattr(module, "set_shape"):
-            module.set_shape("DC")
-        if hasattr(module, "apply_dc_current"):
-            module.apply_dc_current(float(current_a), output_enable=False)
-        elif hasattr(module, "set_current_amplitude"):
-            module.set_current_amplitude(float(current_a))
-        if hasattr(module, "set_disable_on_compliance"):
-            module.set_disable_on_compliance(True)
-        self._source_state[source] = SourceConfig(
-            mode="dc_current",
-            current_a=current_a,
-            compliance_v=compliance_v,
-            autorange=autorange,
-        )
+        try:
+            if hasattr(module, "go_to_current_mode"):
+                module.go_to_current_mode()
+            if hasattr(module, "set_shape"):
+                module.set_shape("DC")
+            if hasattr(module, "apply_dc_current"):
+                module.apply_dc_current(float(current_a), output_enable=False)
+            elif hasattr(module, "set_current_amplitude"):
+                module.set_current_amplitude(float(current_a))
+            if hasattr(module, "set_disable_on_compliance"):
+                module.set_disable_on_compliance(True)
+            self._source_state[source] = SourceConfig(
+                mode="dc_current",
+                current_a=current_a,
+                compliance_v=compliance_v,
+                autorange=autorange,
+            )
+        except Exception as e:
+            raise HardwareError(f"Failed to configure DC current on M81 source {source}: {e}") from e
 
     def configure_dc_voltage(self, source: str, voltage_v: float, compliance_a: float = 1e-3, autorange: bool = True) -> None:
         module = self.get_source_module(source)
-        if hasattr(module, "go_to_voltage_mode"):
-            module.go_to_voltage_mode()
-        if hasattr(module, "set_shape"):
-            module.set_shape("DC")
-        if hasattr(module, "apply_dc_voltage"):
-            module.apply_dc_voltage(float(voltage_v), output_enable=False)
-        elif hasattr(module, "set_voltage_amplitude"):
-            module.set_voltage_amplitude(float(voltage_v))
-        if hasattr(module, "set_disable_on_compliance"):
-            module.set_disable_on_compliance(True)
-        self._source_state[source] = SourceConfig(
-            mode="dc_voltage",
-            voltage_v=voltage_v,
-            compliance_a=compliance_a,
-            autorange=autorange,
-        )
+        try:
+            if hasattr(module, "go_to_voltage_mode"):
+                module.go_to_voltage_mode()
+            if hasattr(module, "set_shape"):
+                module.set_shape("DC")
+            if hasattr(module, "apply_dc_voltage"):
+                module.apply_dc_voltage(float(voltage_v), output_enable=False)
+            elif hasattr(module, "set_voltage_amplitude"):
+                module.set_voltage_amplitude(float(voltage_v))
+            if hasattr(module, "set_disable_on_compliance"):
+                module.set_disable_on_compliance(True)
+            self._source_state[source] = SourceConfig(
+                mode="dc_voltage",
+                voltage_v=voltage_v,
+                compliance_a=compliance_a,
+                autorange=autorange,
+            )
+        except Exception as e:
+            raise HardwareError(f"Failed to configure DC voltage on M81 source {source}: {e}") from e
 
     def configure_ac_current_lockin(
         self,
@@ -278,32 +346,50 @@ class M81Controller:
         time_constant_s: float = 0.3,
         reference_source: str = "S1",
     ) -> None:
+        """Configures an AC current source and measurement channels for a lock-in measurement.
+
+        Args:
+            source: The name of the source module (e.g., "S1").
+            current_rms_a: The AC current (RMS) in Amperes.
+            frequency_hz: The frequency of the source and lock-in reference.
+            measure_channels: List of measurement channels to configure (e.g., ["M1", "M2"]).
+            harmonic: The harmonic to measure.
+            time_constant_s: The time constant of the lock-in filter.
+            reference_source: The reference source for the lock-in.
+
+        Raises:
+            InstrumentConfigError: If the source or measure module does not exist.
+            HardwareError: If the instrument configuration fails.
+        """
         peak_current = current_rms_a * 2**0.5
         module = self.get_source_module(source)
-        if hasattr(module, "go_to_current_mode"):
-            module.go_to_current_mode()
-        if hasattr(module, "set_shape"):
-            module.set_shape("SINUSOID")
-        if hasattr(module, "set_frequency"):
-            module.set_frequency(float(frequency_hz))
-        if hasattr(module, "apply_ac_current"):
-            module.apply_ac_current(float(frequency_hz), float(peak_current), offset=0.0, output_enable=False)
-        elif hasattr(module, "set_current_amplitude"):
-            module.set_current_amplitude(float(peak_current))
-        for measure_channel in measure_channels:
-            self.configure_lockin_measure(
-                measure_channel=measure_channel,
-                harmonic=harmonic,
-                time_constant_s=time_constant_s,
+        try:
+            if hasattr(module, "go_to_current_mode"):
+                module.go_to_current_mode()
+            if hasattr(module, "set_shape"):
+                module.set_shape("SINUSOID")
+            if hasattr(module, "set_frequency"):
+                module.set_frequency(float(frequency_hz))
+            if hasattr(module, "apply_ac_current"):
+                module.apply_ac_current(float(frequency_hz), float(peak_current), offset=0.0, output_enable=False)
+            elif hasattr(module, "set_current_amplitude"):
+                module.set_current_amplitude(float(peak_current))
+            for measure_channel in measure_channels:
+                self.configure_lockin_measure(
+                    measure_channel=measure_channel,
+                    harmonic=harmonic,
+                    time_constant_s=time_constant_s,
+                    reference_source=reference_source,
+                )
+            self._source_state[source] = SourceConfig(
+                mode="ac_current",
+                current_a=current_rms_a,
+                frequency_hz=frequency_hz,
                 reference_source=reference_source,
+                harmonic=harmonic,
             )
-        self._source_state[source] = SourceConfig(
-            mode="ac_current",
-            current_a=current_rms_a,
-            frequency_hz=frequency_hz,
-            reference_source=reference_source,
-            harmonic=harmonic,
-        )
+        except Exception as e:
+            raise HardwareError(f"Failed to configure AC lock-in current on M81 source {source}: {e}") from e
 
     def configure_ac_voltage_lockin(
         self,
@@ -317,36 +403,42 @@ class M81Controller:
     ) -> None:
         peak_voltage = voltage_rms_v * 2**0.5
         module = self.get_source_module(source)
-        if hasattr(module, "go_to_voltage_mode"):
-            module.go_to_voltage_mode()
-        if hasattr(module, "set_shape"):
-            module.set_shape("SINUSOID")
-        if hasattr(module, "set_frequency"):
-            module.set_frequency(float(frequency_hz))
-        if hasattr(module, "apply_ac_voltage"):
-            module.apply_ac_voltage(float(frequency_hz), float(peak_voltage), offset=0.0, output_enable=False)
-        elif hasattr(module, "set_voltage_amplitude"):
-            module.set_voltage_amplitude(float(peak_voltage))
-        for measure_channel in measure_channels:
-            self.configure_lockin_measure(
-                measure_channel=measure_channel,
-                harmonic=harmonic,
-                time_constant_s=time_constant_s,
+        try:
+            if hasattr(module, "go_to_voltage_mode"):
+                module.go_to_voltage_mode()
+            if hasattr(module, "set_shape"):
+                module.set_shape("SINUSOID")
+            if hasattr(module, "set_frequency"):
+                module.set_frequency(float(frequency_hz))
+            if hasattr(module, "apply_ac_voltage"):
+                module.apply_ac_voltage(float(frequency_hz), float(peak_voltage), offset=0.0, output_enable=False)
+            elif hasattr(module, "set_voltage_amplitude"):
+                module.set_voltage_amplitude(float(peak_voltage))
+            for measure_channel in measure_channels:
+                self.configure_lockin_measure(
+                    measure_channel=measure_channel,
+                    harmonic=harmonic,
+                    time_constant_s=time_constant_s,
+                    reference_source=reference_source,
+                )
+            self._source_state[source] = SourceConfig(
+                mode="ac_voltage",
+                voltage_v=voltage_rms_v,
+                frequency_hz=frequency_hz,
                 reference_source=reference_source,
+                harmonic=harmonic,
             )
-        self._source_state[source] = SourceConfig(
-            mode="ac_voltage",
-            voltage_v=voltage_rms_v,
-            frequency_hz=frequency_hz,
-            reference_source=reference_source,
-            harmonic=harmonic,
-        )
+        except Exception as e:
+            raise HardwareError(f"Failed to configure AC lock-in voltage on M81 source {source}: {e}") from e
 
     def configure_dc_measure(self, measure_channel: str, nplc: float = 1.0) -> None:
         module = self.get_measure_module(measure_channel)
-        if hasattr(module, "setup_dc_measurement"):
-            module.setup_dc_measurement(nplc=nplc)
-        self._measure_state[measure_channel] = {"mode": "dc", "nplc": nplc}
+        try:
+            if hasattr(module, "setup_dc_measurement"):
+                module.setup_dc_measurement(nplc=nplc)
+            self._measure_state[measure_channel] = {"mode": "dc", "nplc": nplc}
+        except Exception as e:
+            raise HardwareError(f"Failed to configure DC measurement on M81 channel {measure_channel}: {e}") from e
 
     def configure_lockin_measure(
         self,
@@ -357,16 +449,19 @@ class M81Controller:
         rolloff: str = "R24",
     ) -> None:
         module = self.get_measure_module(measure_channel)
-        if hasattr(module, "setup_lock_in_measurement"):
-            module.setup_lock_in_measurement(
-                reference_source,
-                time_constant_s,
-                rolloff=rolloff,
-                reference_harmonic=harmonic,
-            )
-        else:  # pragma: no cover - hardware fallback
-            self.scpi._command(f"{measure_channel}:LIA:REF {reference_source}")
-            self.scpi._command(f"{measure_channel}:LIA:HARM {harmonic}")
+        try:
+            if hasattr(module, "setup_lock_in_measurement"):
+                module.setup_lock_in_measurement(
+                    reference_source,
+                    time_constant_s,
+                    rolloff=rolloff,
+                    reference_harmonic=harmonic,
+                )
+            else:  # pragma: no cover - hardware fallback
+                self.scpi._command(f"{measure_channel}:LIA:REF {reference_source}")
+                self.scpi._command(f"{measure_channel}:LIA:HARM {harmonic}")
+        except Exception as e:
+            raise HardwareError(f"Failed to configure lock-in measurement on M81 channel {measure_channel}: {e}") from e
         self._measure_state[measure_channel] = {
             "mode": "lockin",
             "harmonic": harmonic,
@@ -383,16 +478,27 @@ class M81Controller:
             self.scpi._command(f"{measure_channel}:LIA:HARM {harmonic}")
 
     def enable_source(self, source: str) -> None:
+        """Enables the output of a source module.
+
+        Args:
+            source: The name of the source module to enable (e.g., "S1").
+        """
         module = self.get_source_module(source)
         module.enable()
         self._source_state[source].enabled = True
 
     def disable_source(self, source: str) -> None:
+        """Disables the output of a source module.
+
+        Args:
+            source: The name of the source module to disable (e.g., "S1").
+        """
         module = self.get_source_module(source)
         module.disable()
         self._source_state[source].enabled = False
 
     def disable_all_sources(self) -> None:
+        """Disables the output of all known source modules."""
         for source in list(self._sources):
             try:
                 self.disable_source(source)
@@ -400,6 +506,11 @@ class M81Controller:
                 LOGGER.exception("Failed to disable source %s", source)
 
     def any_source_enabled(self) -> bool:
+        """Checks if at least one source is currently enabled.
+
+        Returns:
+            True if at least one source is active, False otherwise.
+        """
         return any(state.enabled for state in self._source_state.values())
 
     def get_source_settings(self, source: str) -> SourceConfig:
@@ -466,6 +577,15 @@ class M81Controller:
         return records
 
     def read_lockin(self, measure_channel: str) -> dict[str, Any]:
+        """Reads the values of a lock-in measurement from a channel.
+
+        Args:
+            measure_channel: The measurement channel to read from (e.g., "M2").
+
+        Returns:
+            A dictionary containing the X, Y, R, Theta, frequency,
+            harmonic, and timestamp values.
+        """
         module = self.get_measure_module(measure_channel)
         harmonic = module.get_reference_harmonic() if hasattr(module, "get_reference_harmonic") else None
         data = {
@@ -485,6 +605,14 @@ class M81Controller:
         return data
 
     def read_dc(self, measure_channel: str) -> dict[str, Any]:
+        """Reads a DC value from a measurement channel.
+
+        Args:
+            measure_channel: The measurement channel to read from (e.g., "M1").
+
+        Returns:
+            A dictionary containing the measured value and the timestamp.
+        """
         module = self.get_measure_module(measure_channel)
         value = module.get_dc()
         return {"value": value, "timestamp": datetime.now(timezone.utc).isoformat()}
@@ -539,6 +667,7 @@ class M81Controller:
         self.scpi.abort_sweep()
 
     def emergency_stop(self) -> None:
+        """Performs an emergency stop, disabling all sources."""
         self.disable_all_sources()
 
     def status_snapshot(self) -> dict[str, Any]:

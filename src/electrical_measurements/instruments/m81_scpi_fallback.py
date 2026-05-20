@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from ..exceptions import HardwareError
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -16,7 +18,7 @@ class M81SCPIFallback:
     def _query(self, command: str) -> str:
         LOGGER.debug("M81 SCPI query: %s", command)
         if not hasattr(self.instrument, "query"):
-            raise RuntimeError("Underlying M81 connection does not support direct SCPI query")
+            raise HardwareError("Underlying M81 connection does not support direct SCPI query")
         return str(self.instrument.query(command))
 
     def _command(self, command: str) -> None:
@@ -27,7 +29,7 @@ class M81SCPIFallback:
         if hasattr(self.instrument, "write"):
             self.instrument.write(command)
             return
-        raise RuntimeError("Underlying M81 connection does not support direct SCPI write")
+        raise HardwareError("Underlying M81 connection does not support direct SCPI write")
 
     def configure_trace_stream(self, channel: str, points: int, interval_s: float) -> None:
         self._command(f"TRAC:CONF {channel},{points},{interval_s}")

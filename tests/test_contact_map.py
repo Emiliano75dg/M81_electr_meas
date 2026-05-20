@@ -1,3 +1,6 @@
+import pytest
+
+from electrical_measurements.exceptions import ContactMapError
 from electrical_measurements.switching.contact_map import ContactMap
 
 
@@ -22,3 +25,17 @@ def test_contact_map_extracts_instrument_channels():
     assert contact_map.instrument_channel("current_source") == "S1"
     assert contact_map.instrument_channel("vxx_meter") == "M1"
     assert contact_map.instrument_channel("vxy_meter") == "M2"
+
+
+def test_contact_map_validate_raises_domain_exception_for_missing_name(tmp_path):
+    path = tmp_path / "invalid_contact_map.yaml"
+    path.write_text(
+        "contacts:\n"
+        "  A:\n"
+        "    column: 1\n"
+        "states:\n"
+        "  state_1:\n"
+        "    relay_channels: [1, 2]\n"
+    )
+    with pytest.raises(ContactMapError, match="define a name"):
+        ContactMap.from_yaml(path)

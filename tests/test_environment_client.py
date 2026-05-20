@@ -1,5 +1,6 @@
 import pytest
 
+from electrical_measurements.exceptions import EnvironmentControlError
 from electrical_measurements.instruments.teslatron_client import (
     ReadOnlyEnvironmentController,
     StandaloneEnvironmentController,
@@ -58,5 +59,5 @@ def test_async_poll_environment_is_read_only():
     environment = ReadOnlyEnvironmentController(backend=backend)
     assert environment.read_temperature() == 299.0
     assert environment.read_field() == 0.05
-    with pytest.raises(RuntimeError):
+    with pytest.raises(EnvironmentControlError):
         environment.set_temperature(300.0)

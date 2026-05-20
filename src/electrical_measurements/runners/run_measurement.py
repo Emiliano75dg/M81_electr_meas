@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from ..exceptions import RunnerInputError
 from ..analysis.antisymmetrize import antisymmetrize_in_field
 from ..analysis.hall import compute_hall_density, compute_mobility, fit_hall_slope, infer_carrier_sign
 from ..analysis.reciprocity import match_reciprocal_field
@@ -139,7 +140,7 @@ def build_protocol(args: argparse.Namespace, config: dict[str, Any], contact_map
         return ReciprocityProtocol(states=selected_states or list(contact_map.states.keys())[:2], current_rms_a=args.current, frequency_hz=args.frequency, harmonic=args.harmonic, **common)
     if args.protocol == "check_contacts":
         return ContactCheckProtocol(states=selected_states or list(contact_map.states.keys()), **common)
-    raise ValueError(f"Unsupported protocol: {args.protocol}")
+    raise RunnerInputError(f"Unsupported protocol: {args.protocol}")
 
 
 def parse_float_list(value: str | None) -> list[float]:
@@ -150,29 +151,29 @@ def parse_float_list(value: str | None) -> list[float]:
 
 def validate_run_inputs(args: argparse.Namespace, contact_map: ContactMap) -> None:
     if getattr(args, "settle", 0.0) < 0:
-        raise ValueError("--settle must be >= 0")
+        raise RunnerInputError("--settle must be >= 0")
     if getattr(args, "stream_interval", 0.0) <= 0:
-        raise ValueError("--stream-interval must be > 0")
+        raise RunnerInputError("--stream-interval must be > 0")
     if getattr(args, "stream_samples", 0) <= 0:
-        raise ValueError("--stream-samples must be > 0")
+        raise RunnerInputError("--stream-samples must be > 0")
     if getattr(args, "mode", "stable") == "stream-ramp":
         if getattr(args, "ramp_rate", None) is None or float(args.ramp_rate) <= 0:
-            raise ValueError("--ramp-rate must be > 0 in stream-ramp mode")
+            raise RunnerInputError("--ramp-rate must be > 0 in stream-ramp mode")
     if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "vdp_hall", "reciprocity"}:
         if getattr(args, "current", 0.0) <= 0:
-            raise ValueError("--current must be > 0 for the selected protocol")
+            raise RunnerInputError("--current must be > 0 for the selected protocol")
     if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "vdp_hall", "reciprocity"}:
         if getattr(args, "frequency", 0.0) <= 0:
-            raise ValueError("--frequency must be > 0 for the selected protocol")
+            raise RunnerInputError("--frequency must be > 0 for the selected protocol")
     if getattr(args, "harmonic", 1) < 1:
-        raise ValueError("--harmonic must be >= 1")
+        raise RunnerInputError("--harmonic must be >= 1")
     state_name = getattr(args, "state_name", None)
     if state_name and state_name not in contact_map.states:
-        raise ValueError(f"Unknown --state-name: {state_name}")
+        raise RunnerInputError(f"Unknown --state-name: {state_name}")
     selected_states = [item.strip() for item in (getattr(args, "selected_states", "") or "").split(",") if item.strip()]
     unknown_states = [state for state in selected_states if state not in contact_map.states]
     if unknown_states:
-        raise ValueError(f"Unknown selected states: {unknown_states}")
+        raise RunnerInputError(f"Unknown selected states: {unknown_states}")
 
 
 def build_run_namespace(
@@ -266,7 +267,7 @@ def extract_stream_settings(protocol: Any) -> tuple[str, str, str, int | None]:
     source_channel = getattr(protocol, "source", "S1")
     harmonic = getattr(protocol, "harmonic", None)
     if state is None:
-        raise ValueError("Streaming mode currently requires a single-state protocol")
+        raise RunnerInputError("Streaming mode currently requires a single-state protocol")
     return state, measure_channel, source_channel, harmonic
 
 
@@ -372,7 +373,7 @@ def run_stream_ramp_command(
     protocol: Any,
 ) -> int:
     if args.ramp_target is None or args.ramp_rate is None:
-        raise ValueError("Streaming ramp mode requires --ramp-target and --ramp-rate")
+        raise RunnerInputError("Streaming ramp mode requires --ramp-target and --ramp-rate")
     state_name, measure_channel, source_channel, harmonic = extract_stream_settings(protocol)
     LOGGER.info("Starting stream-ramp run protocol=%s state=%s quantity=%s target=%s rate=%s", args.protocol, getattr(protocol, "state", None), args.ramp_quantity, args.ramp_target, args.ramp_rate)
     protocol.setup()
@@ -397,7 +398,7 @@ def run_stream_ramp_command(
         m81.configure_trace_stream(channel=measure_channel, points=args.stream_samples, interval_s=args.stream_interval)
         m81.enable_source(source_channel)
         if not environment_supports_control(environment):
-            raise ValueError("Streaming ramp mode requires an environment with control enabled; async-poll mode is read-only")
+            raise RunnerInputError("Streaming ramp mode requires an environment with control enabled; async-poll mode is read-only")
         if args.ramp_quantity == "field":
             environment.start_field_ramp(args.ramp_target, args.ramp_rate)
         else:

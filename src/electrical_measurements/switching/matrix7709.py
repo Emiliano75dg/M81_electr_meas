@@ -6,6 +6,7 @@ import logging
 import time
 from typing import Any
 
+from ..exceptions import MatrixSwitchError
 from ..instruments.daq6510_7709 import DAQ6510Controller
 from .contact_map import ContactMap
 from .safety import switching_log_entry, validate_contact_map_state
@@ -53,11 +54,11 @@ class Matrix7709:
 
     def apply_state(self, state_name: str, override_source_enabled: bool = False, reenable_sources: bool = False) -> list[int]:
         if self.contact_map is None:
-            raise RuntimeError("No ContactMap attached to Matrix7709")
+            raise MatrixSwitchError("No ContactMap attached to Matrix7709")
         active_sources = bool(self.m81 and self.m81.any_source_enabled())
         validation = validate_contact_map_state(self.contact_map, state_name, active_sources=active_sources, override=override_source_enabled)
         if not validation.ok:
-            raise RuntimeError(validation.reason)
+            raise MatrixSwitchError(validation.reason)
         state = self.contact_map.get_state(state_name)
         if self.m81:
             self.m81.disable_all_sources()

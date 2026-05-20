@@ -6,6 +6,8 @@ import math
 import random
 from typing import Any
 
+from ..exceptions import InstrumentConfigError
+
 VALID_MEASURE_MODES = {"auto", "dc", "lockin"}
 VALID_LOCKIN_ROLLOFFS = {"R6", "R12", "R18", "R24"}
 
@@ -125,13 +127,13 @@ class MockM81Controller:
     def set_preferred_measure_mode(self, measure_channel: str, mode: str) -> None:
         normalized = str(mode).strip().lower()
         if normalized not in VALID_MEASURE_MODES:
-            raise ValueError(f"Unsupported measure mode for {measure_channel}: {mode}")
+            raise InstrumentConfigError(f"Unsupported measure mode for {measure_channel}: {mode}")
         self._preferred_measure_modes[measure_channel] = normalized
 
     def set_preferred_measure_harmonic(self, measure_channel: str, harmonic: int) -> None:
         parsed = int(harmonic)
         if parsed < 1:
-            raise ValueError(f"Unsupported measure harmonic for {measure_channel}: {harmonic}")
+            raise InstrumentConfigError(f"Unsupported measure harmonic for {measure_channel}: {harmonic}")
         self._preferred_measure_harmonics[measure_channel] = parsed
 
     def get_preferred_measure_harmonic(self, measure_channel: str) -> int | None:
@@ -140,25 +142,25 @@ class MockM81Controller:
     def set_preferred_measure_nplc(self, measure_channel: str, nplc: float) -> None:
         parsed = float(nplc)
         if parsed <= 0:
-            raise ValueError(f"Unsupported measure nplc for {measure_channel}: {nplc}")
+            raise InstrumentConfigError(f"Unsupported measure nplc for {measure_channel}: {nplc}")
         self._preferred_measure_nplc[measure_channel] = parsed
 
     def set_preferred_measure_time_constant(self, measure_channel: str, time_constant_s: float) -> None:
         parsed = float(time_constant_s)
         if parsed <= 0:
-            raise ValueError(f"Unsupported measure time constant for {measure_channel}: {time_constant_s}")
+            raise InstrumentConfigError(f"Unsupported measure time constant for {measure_channel}: {time_constant_s}")
         self._preferred_measure_time_constants[measure_channel] = parsed
 
     def set_preferred_measure_rolloff(self, measure_channel: str, rolloff: str) -> None:
         normalized = str(rolloff).strip().upper()
         if normalized not in VALID_LOCKIN_ROLLOFFS:
-            raise ValueError(f"Unsupported measure rolloff for {measure_channel}: {rolloff}")
+            raise InstrumentConfigError(f"Unsupported measure rolloff for {measure_channel}: {rolloff}")
         self._preferred_measure_rolloffs[measure_channel] = normalized
 
     def resolve_measure_mode(self, measure_channel: str, requested_mode: str = "auto") -> str:
         normalized = str(requested_mode).strip().lower()
         if normalized not in VALID_MEASURE_MODES:
-            raise ValueError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}")
+            raise InstrumentConfigError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}")
         if normalized != "auto":
             return normalized
         preferred = self._preferred_measure_modes.get(measure_channel, "auto")
@@ -173,7 +175,7 @@ class MockM81Controller:
         if requested_harmonic is not None:
             parsed = int(requested_harmonic)
             if parsed < 1:
-                raise ValueError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}")
+                raise InstrumentConfigError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}")
             return parsed
         preferred_harmonic = self._preferred_measure_harmonics.get(measure_channel)
         if isinstance(preferred_harmonic, int) and preferred_harmonic >= 1:
@@ -187,7 +189,7 @@ class MockM81Controller:
         if requested_nplc is not None:
             parsed = float(requested_nplc)
             if parsed <= 0:
-                raise ValueError(f"Unsupported requested nplc for {measure_channel}: {requested_nplc}")
+                raise InstrumentConfigError(f"Unsupported requested nplc for {measure_channel}: {requested_nplc}")
             return parsed
         preferred_nplc = self._preferred_measure_nplc.get(measure_channel)
         if isinstance(preferred_nplc, (int, float)) and float(preferred_nplc) > 0:
@@ -201,7 +203,7 @@ class MockM81Controller:
         if requested_time_constant_s is not None:
             parsed = float(requested_time_constant_s)
             if parsed <= 0:
-                raise ValueError(f"Unsupported requested time constant for {measure_channel}: {requested_time_constant_s}")
+                raise InstrumentConfigError(f"Unsupported requested time constant for {measure_channel}: {requested_time_constant_s}")
             return parsed
         preferred_time_constant_s = self._preferred_measure_time_constants.get(measure_channel)
         if isinstance(preferred_time_constant_s, (int, float)) and float(preferred_time_constant_s) > 0:
@@ -215,7 +217,7 @@ class MockM81Controller:
         if requested_rolloff is not None:
             normalized = str(requested_rolloff).strip().upper()
             if normalized not in VALID_LOCKIN_ROLLOFFS:
-                raise ValueError(f"Unsupported requested rolloff for {measure_channel}: {requested_rolloff}")
+                raise InstrumentConfigError(f"Unsupported requested rolloff for {measure_channel}: {requested_rolloff}")
             return normalized
         preferred_rolloff = self._preferred_measure_rolloffs.get(measure_channel)
         if isinstance(preferred_rolloff, str):

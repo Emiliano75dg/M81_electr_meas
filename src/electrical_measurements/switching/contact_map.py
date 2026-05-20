@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from ..exceptions import ContactMapError
+
 
 def row_column_to_channel(row: int, column: int) -> int:
     return (row - 1) * 8 + column
@@ -140,20 +142,20 @@ class ContactMap:
 
     def validate(self) -> None:
         if not self.data.get("name"):
-            raise ValueError("Contact map must define a name")
+            raise ContactMapError("Contact map must define a name")
         if not self.contacts:
-            raise ValueError("Contact map must define contacts")
+            raise ContactMapError("Contact map must define contacts")
         if not self.states:
-            raise ValueError("Contact map must define states")
+            raise ContactMapError("Contact map must define states")
         for contact, definition in self.contacts.items():
             if "column" not in definition:
-                raise ValueError(f"Contact {contact} is missing column mapping")
+                raise ContactMapError(f"Contact {contact} is missing column mapping")
         for state_name, state in self.states.items():
             for key in ["current", "voltage", "voltage_longitudinal", "voltage_transverse"]:
                 for contact in state.get(key, []):
                     if contact not in self.contacts:
-                        raise ValueError(f"State {state_name} references unknown contact {contact}")
+                        raise ContactMapError(f"State {state_name} references unknown contact {contact}")
             relay_channels = state.get("relay_channels")
             if relay_channels:
                 if len(relay_channels) != len(set(relay_channels)):
-                    raise ValueError(f"State {state_name} contains duplicate relay channels")
+                    raise ContactMapError(f"State {state_name} contains duplicate relay channels")

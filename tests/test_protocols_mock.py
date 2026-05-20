@@ -1,5 +1,6 @@
 import pytest
 
+from electrical_measurements.exceptions import InstrumentConfigError, ProtocolConfigError
 from electrical_measurements.instruments.mock import MockM81Controller
 from electrical_measurements.io.dataset import measurement_points_to_dataframe
 from electrical_measurements.switching.contact_map import ContactMap
@@ -75,8 +76,14 @@ def test_protocol_setup_rejects_invalid_frequency():
         current_rms_a=10e-6,
         frequency_hz=0.0,
     )
-    with pytest.raises(ValueError, match="frequency_hz"):
+    with pytest.raises(ProtocolConfigError, match="frequency_hz"):
         protocol.setup()
+
+
+def test_mock_controller_rejects_invalid_measure_mode_with_domain_exception():
+    m81 = MockM81Controller()
+    with pytest.raises(InstrumentConfigError, match="Unsupported measure mode"):
+        m81.set_preferred_measure_mode("M1", "invalid")
 
 
 def test_mock_controller_loads_per_channel_harmonics_from_config():

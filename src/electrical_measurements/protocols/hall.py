@@ -3,10 +3,34 @@ from __future__ import annotations
 from typing import Any
 
 from ..analysis.hall import compute_hall_density, compute_mobility
+from ..exceptions import HardwareError, MatrixSwitchError, ProtocolConfigError
 from .base import MeasurementPoint, MeasurementProtocol
 
 
 class HallProtocol(MeasurementProtocol):
+    """Hall measurement protocol for carrier concentration extraction.
+
+    Measures transverse (Hall, Rxy) and longitudinal (Rxx) resistances as a
+    function of magnetic field to determine carrier type (electrons/holes),
+    their density, and mobility.
+
+    This protocol also supports simultaneous measurement of Rxx if a longitudinal
+    measurement channel is specified in the contact map (`vxx_meter`).
+    Additionally, it handles current reversal for thermoelectric offset subtraction
+    if a `reverse_current` state is defined.
+
+    Attributes:
+        state (str): Name of the contact configuration state from the contact_map.
+        current_rms_a (float): AC current amplitude (RMS) in Amperes.
+        frequency_hz (float): Lock-in frequency.
+        harmonic (int): Lock-in harmonic to measure (e.g., 1 for 1f).
+        measure_channel (str): M81 measurement channel for Hall voltage (Vxy).
+        longitudinal_measure_channel (str | None): Optional measurement channel for Vxx.
+        source (str): M81 source channel for the current.
+        sheet_resistance_ohm_sq (float | None): If provided, it is used to calculate
+            carrier mobility.
+    """
+
     def __init__(
         self,
         *,
@@ -18,6 +42,21 @@ class HallProtocol(MeasurementProtocol):
         source: str = "S1",
         **kwargs: Any,
     ) -> None:
+        """Initializes the Hall measurement protocol.
+
+        Args:
+            state: Name of the measurement state (e.g., "hallbar_forward") defined
+                in the contact map file.
+            current_rms_a: AC current (RMS) to apply to the sample.
+            frequency_hz: Frequency of the AC current source.
+            harmonic: Harmonic to measure with the lock-in (usually 1).
+            measure_channel: M81 measurement channel for the Hall voltage (Vxy).
+                This is overridden if `vxy_meter` is defined in the contact map.
+            source: M81 source channel for the current. This is overridden
+                if `current_source` is defined in the contact map.
+            **kwargs: Additional arguments passed to the base class, such as
+                `sheet_resistance_ohm_sq` for mobility calculation.
+        """
         super().__init__(**kwargs)
         self.state = state
         self.current_rms_a = current_rms_a
@@ -29,6 +68,15 @@ class HallProtocol(MeasurementProtocol):
         self.sheet_resistance_ohm_sq: float | None = kwargs.get("sheet_resistance_ohm_sq")
 
     def setup(self) -> None:
+        """Configures the instruments for the Hall measurement.
+
+        Sets up the AC current source and lock-in measurement channels on the M81
+        based on the protocol parameters.
+
+        Raises:
+            ProtocolConfigError: If the configuration parameters are invalid
+                (e.g., non-existent state, negative current).
+        """
         self._require_state_exists(self.state)
         self._require_positive(self.current_rms_a, "current_rms_a")
         self._require_positive(self.frequency_hz, "frequency_hz")
@@ -51,6 +99,27 @@ class HallProtocol(MeasurementProtocol):
             )
 
     def measure_point(self, temperature_k: float | None = None, field_t: float | None = None) -> MeasurementPoint:
+        """Performs a single Hall measurement at a given temperature and field.
+
+        The measurement process includes:
+        1. Setting the matrix state for the "forward" measurement.
+        2. Enabling the source and measuring Vxy (and Vxx if configured).
+        3. If available, reversing the current and repeating the measurement.
+        4. Calculating Rxy and Rxx by subtracting offsets.
+        5. Calculating Hall density and mobility.
+
+        Args:
+            temperature_k: The target temperature for the measurement.
+            field_t: The target magnetic field for the measurement.
+
+        Returns:
+            A MeasurementPoint object containing all raw, derived, and
+            metadata from the measurement.
+
+        Raises:
+            HardwareError: In case of communication problems with the instruments.
+            MatrixSwitchError: If the matrix fails to switch the relays.
+        """
         forward_channels = [self.measure_channel]
         if self.longitudinal_measure_channel and self.longitudinal_measure_channel not in forward_channels:
             forward_channels.append(self.longitudinal_measure_channel)

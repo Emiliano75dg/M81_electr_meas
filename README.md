@@ -1,33 +1,49 @@
 # electrical_measurements
 
-Framework Python per misure elettriche su campioni in funzione di temperatura e campo magnetico, con geometrie descritte da YAML e switching tramite Keithley/Tektronix DAQ6510 + matrice 7709.
+A Python framework for automating complex electrical measurements on semiconductor samples. It manages temperature and magnetic field control, contact switching via relay matrices (e.g., Keithley/Tektronix DAQ6510 + 7709), and data acquisition from instruments like the Lake Shore M81-SSM.
 
-## Caratteristiche
+For a much more detailed operational manual, see [USER_GUIDE.md](/home/emiliano/Documents/Automazione/M81_electr_meas/USER_GUIDE.md).
 
-- geometrie non hardcodate: Van der Pauw, Hall bar 6/8 contatti e configurazioni custom
-- interlock software per proteggere sorgenti e relay
-- modalità mock/dry-run per sviluppo e test offline
-- protocolli per magnetoresistenza, Hall, Van der Pauw, seconda armonica e reciprocità
-- salvataggio dati in CSV, Parquet e metadata JSON
+## Features
 
-## Installazione
+- **Flexible Geometries**: Define your sample's pinout (Van der Pauw, Hall bar, custom) in a YAML file, with no hard-coding.
+- Software interlocks to protect sources and relays.
+- Mock/dry-run mode for offline development and testing.
+- Protocols for magnetoresistance, Hall, Van der Pauw, second harmonic, and reciprocity.
+- Data saving in CSV, Parquet, and JSON metadata formats.
+
+## Installation
+
+This project requires Python 3.11 or higher.
 
 ```bash
+# 1. Clone the repository
+git clone <YOUR_REPOSITORY_URL>
+cd <YOUR_REPOSITORY_DIR>
+
+# 2. Install the package
+pip install -e .
+
+# 3. Install optional extras
 pip install -e .[test]
+pip install -e .[hardware]
+
+# 4. Optional runtime backends
 pip install lakeshore
+pip install pyvisa-py # or another pyvisa backend
 ```
 
-Riferimenti Lake Shore obbligatori:
+Required Lake Shore references:
 
-- Driver ufficiale: https://github.com/lakeshorecryotronics/python-driver
-- Documentazione: https://lake-shore-python-driver.readthedocs.io/en/latest/
-- Installazione driver: `pip install lakeshore`
+- Official driver: https://github.com/lakeshorecryotronics/python-driver
+- Documentation: https://lake-shore-python-driver.readthedocs.io/en/latest/
+- Driver installation: `pip install lakeshore`
 
-Il wrapper usa `from lakeshore import SSMSystem` come interfaccia primaria per l'M81.
+The wrapper uses `from lakeshore import SSMSystem` as the primary interface for the M81.
 
-## Configurazione strumenti
+## Instrument Configuration
 
-Esempio [configs/instruments.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/instruments.yaml):
+Example [configs/instruments.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/instruments.yaml):
 
 ```yaml
 sample_id: demo-sample
@@ -67,32 +83,32 @@ output:
   directory: data
 ```
 
-`measure_modes` e facoltativo e permette di impostare il tipo di acquisizione preferito per ciascun canale di misura `M1/M2/M3`:
+`measure_modes` is optional and defines the preferred acquisition mode for each M81 measurement channel:
 
-- `lockin`: lettura `x/y/r/theta`
-- `dc`: lettura `value`
-- `auto`: usa la configurazione del canale se presente, altrimenti fallback automatico
+- `lockin`: reads `x/y/r/theta`
+- `dc`: reads `value`
+- `auto`: uses the channel configuration if already set, otherwise falls back automatically
 
-`measure_harmonics` e facoltativo e definisce, per ciascun canale in modalita `lockin`, quale armonica misurare:
+`measure_harmonics` is optional and selects which harmonic is read in `lockin` mode:
 
-- `1`: fondamentale
-- `2`, `3`, ...: armoniche superiori
+- `1`: first harmonic
+- `2`, `3`, ...: higher harmonics
 
-`measure_nplc` e facoltativo e definisce il tempo di integrazione per i canali configurati in modalita `dc`:
+`measure_nplc` is optional and defines the DC integration time:
 
-- valori positivi come `0.1`, `1.0`, `5.0`
+- positive values such as `0.1`, `1.0`, `5.0`
 
-`measure_time_constants_s` e facoltativo e definisce la costante di tempo del lock-in per i canali in modalita `lockin`:
+`measure_time_constants_s` is optional and defines the lock-in time constant:
 
-- valori positivi in secondi come `0.1`, `0.3`, `1.0`
+- positive values in seconds such as `0.1`, `0.3`, `1.0`
 
-`measure_rolloffs` e facoltativo e definisce il rolloff del lock-in per canale:
+`measure_rolloffs` is optional and defines the per-channel lock-in rolloff:
 
 - `R6`, `R12`, `R18`, `R24`
 
-La GUI Live permette di cambiare `mode`, `harmonic`, `NPLC`, `time constant` e `rolloff` per `M1/M2/M3`, mentre i protocolli automatici usano le preferenze configurate nel file YAML quando presenti.
+The GUI `Live` tab can override `mode`, `harmonic`, `NPLC`, `time constant`, and `rolloff` interactively for `M1/M2/M3`, while automated protocols use the YAML preferences when available.
 
-Per un backend ambiente reale HTTP:
+For a real HTTP environment backend:
 
 ```yaml
 instruments:
@@ -111,19 +127,19 @@ instruments:
     timeout_s: 5.0
 ```
 
-Modalita ambiente supportate:
+Supported environment modes:
 
-- `integrated`: la app legge e comanda temperatura/campo
-- `async-poll`: la app legge solo lo stato ambiente con polling, ma non invia setpoint o ramp
-- `standalone`: la app lavora anche senza backend ambiente; `T` e `B` restano locali alla sessione
+- `integrated`: the app both reads and controls temperature/field
+- `async-poll`: the app only polls environment state and does not send setpoints or ramp commands
+- `standalone`: the app also works without an environment backend; `T` and `B` remain local to the session
 
 ## Contact map YAML
 
-Il package ragiona in termini di contatti logici del campione e traduce i contatti nei relay fisici della 7709.
+The package works in terms of logical sample contacts and maps them onto the physical 7709 relay channels.
 
-Esempio Van der Pauw: [configs/contact_maps/vdp_4contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/vdp_4contacts_7709.yaml)
+Van der Pauw example: [configs/contact_maps/vdp_4contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/vdp_4contacts_7709.yaml)
 
-Esempio Hall bar: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_7709.yaml)
+Hall bar example: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_7709.yaml)
 
 ## Mock mode
 
@@ -134,42 +150,48 @@ electrical-measure run --mock --config configs/instruments.yaml --protocol vdp_h
 electrical-measure run --mock --config configs/instruments.yaml --protocol vdp --contact-map configs/contact_maps/vdp_4contacts_7709.yaml --include-anisotropy
 ```
 
-`vdp_hall` usa gli stati Van der Pauw per una misura Hall in geometria VdP. Con `--include-reciprocity` la routine aggiunge anche gli stati reciproci alla stessa sequenza e salva i relativi errori di reciprocita nei dati derivati.
+`vdp_hall` runs a Hall measurement using Van der Pauw states. With `--include-reciprocity`, the sequence also includes reciprocal states and stores reciprocity errors in the derived fields.
 
-Nel protocollo `vdp`, `--include-anisotropy` aggiunge un check di anisotropia tra le due famiglie ortogonali Van der Pauw e salva nei `derived` le medie delle due famiglie, la differenza assoluta/relativa e il rapporto tra esse.
+In the `vdp` protocol, `--include-anisotropy` adds an anisotropy check between the two orthogonal Van der Pauw families and saves family averages, absolute/relative difference, and ratio in `derived`.
+
+Other useful subcommands:
+
+- `electrical-measure list-instruments`
+- `electrical-measure check-contacts --mock`
+- `electrical-measure emergency-stop --mock`
 
 ## GUI
 
-Il package include anche una GUI desktop leggera basata su `tkinter`:
+The package also includes a lightweight desktop GUI based on `tkinter`:
 
 ```bash
 electrical-measure gui --mock
 ```
 
-Dalla GUI puoi:
+From the GUI you can:
 
-- scegliere file di configurazione strumenti e contact map
-- selezionare protocollo, modalità `stable` o `stream-ramp`
-- scegliere dalla GUI la modalità ambiente `integrated`, `async-poll` o `standalone`
-- scegliere dinamicamente gli stati di misura dal contact map
-- vedere dettagli dei relay, stati reciproci e binding strumento-contatto
-- impostare correnti, frequenza, armonica, campi e temperature
-- lanciare misure mock o reali riusando lo stesso runner della CLI
-- usare `Emergency Stop` dalla finestra
-- vedere log, stato esecuzione e preview dei CSV generati in tab dedicate
-- collegare strumenti live dalla GUI e monitorare `T`, `B`, sorgenti attive e relay chiusi
-- vedere nella tab `Live` il badge della modalità ambiente effettiva e se il backend è read-only/local
-- usare nella tab `Live` un pannello `Environment Controls` per `Set T/B` e `Start/Stop Ramp` solo quando la modalità è `integrated`
-- configurare manualmente `S1`/`S2`/`S3` in corrente o tensione, in DC o AC lock-in, con setpoint, frequenza e armonica
-- usare mini-sequenze guidate come `Safe Switch Then Enable`, `Safe Switch Then Read` e `Disable + Open All`
-- applicare manualmente uno stato della matrice, aprire tutti i relay e leggere rapidamente `M1` o `M2`
-- avviare un'acquisizione live continua con buffer circolare e grafico aggiornato in tempo reale direttamente dalla tab `Live`
-- con un Hall bar dotato di `vxx_meter` e `vxy_meter`, acquisire live entrambi i canali e sovrapporli nel plot con `x_dual` o `r_dual`
-- disegnare plot rapidi direttamente in GUI scegliendo colonne `X/Y` dal CSV
+- choose instrument configuration files and a contact map
+- select the protocol and either `stable` or `stream-ramp` mode
+- choose the environment mode `integrated`, `async-poll`, or `standalone`
+- select measurement states dynamically from the contact map
+- inspect relay details, reciprocal states, and instrument-to-contact bindings
+- set currents, frequency, harmonic, fields, and temperatures
+- launch mock or real measurements through the same CLI runner
+- use `Emergency Stop` from the window
+- inspect logs, execution state, and previews of generated CSV files in dedicated tabs
+- connect live instruments from the GUI and monitor `T`, `B`, active sources, and closed relays
+- view the effective environment mode badge in the `Live` tab and whether the backend is read-only/local
+- use the `Environment Controls` panel in the `Live` tab for `Set T/B` and `Start/Stop Ramp` only when the mode is `integrated`
+- configure `S1`/`S2`/`S3` manually in current or voltage mode, in DC or AC lock-in, with setpoint, frequency, and harmonic
+- use guided mini-sequences such as `Safe Switch Then Enable`, `Safe Switch Then Read`, and `Disable + Open All`
+- apply a matrix state manually, open all relays, and quickly read `M1` or `M2`
+- start continuous live acquisition with a circular buffer and a real-time plot directly from the `Live` tab
+- with a Hall bar equipped with `vxx_meter` and `vxy_meter`, acquire both live channels and overlay them in the plot with `x_dual` or `r_dual`
+- draw quick plots directly in the GUI by choosing `X/Y` columns from a CSV
 
-## Streaming durante rampa
+## Streaming During Ramps
 
-Per acquisire dati sincronizzati durante una rampa di campo o temperatura:
+To acquire synchronized data during a field or temperature ramp:
 
 ```bash
 electrical-measure run \
@@ -187,22 +209,22 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
-Il dataset risultante salva `trace_index`, `trace_channel`, `field_t`, `temperature_k` ed `environment_timestamp` per sincronizzare il trace M81 con il backend ambiente.
+The resulting dataset stores `trace_index`, `trace_channel`, `field_t`, `temperature_k`, and `environment_timestamp` to synchronize the M81 trace with the environment backend.
 
-Quando il driver ufficiale Lake Shore espone `SSMSystem.get_data()`, il wrapper usa quello come prima scelta per lo streaming dati. Il fallback SCPI rimane confinato a [m81_scpi_fallback.py](/home/emiliano/Documents/Automazione/M81_electr_meas/src/electrical_measurements/instruments/m81_scpi_fallback.py).
+When the official Lake Shore driver exposes `SSMSystem.get_data()`, the wrapper uses it as the first choice for streaming data. The SCPI fallback remains isolated in [m81_scpi_fallback.py](/home/emiliano/Documents/Automazione/M81_electr_meas/src/electrical_measurements/instruments/m81_scpi_fallback.py).
 
-## Sicurezza
+## Safety
 
-- mai cambiare relay con sorgenti abilitate, salvo override esplicito
-- prima del cambio relay il software spegne le sorgenti M81
-- ogni cambio stato apre prima tutti i relay e poi chiude solo i canali validati
-- in caso di errore `SafeMeasurementSession` esegue `emergency_stop()`
+- never switch relays with sources enabled, unless explicitly overridden
+- before switching relays, the software disables the M81 sources
+- every state change first opens all relays and then closes only validated channels
+- on error, `SafeMeasurementSession` executes `emergency_stop()`
 
-## Reciprocità
+## Reciprocity
 
-La reciprocità è trattata come concetto di primo livello:
+Reciprocity is treated as a first-class concept:
 
-- a `B = 0`: confronto diretto `R_ij,kl` vs `R_kl,ij`
-- a `B != 0`: confronto `R_ij,kl(+B)` vs `R_kl,ij(-B)`
+- at `B = 0`: direct comparison `R_ij,kl` vs `R_kl,ij`
+- at `B != 0`: comparison `R_ij,kl(+B)` vs `R_kl,ij(-B)`
 
-I risultati salvano stato, stato reciproco, tipo di pairing di campo ed errori assoluti/relativi.
+Saved results include the state, reciprocal state, field-pairing type, and absolute/relative errors.

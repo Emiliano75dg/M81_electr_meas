@@ -6,6 +6,8 @@ import logging
 import time
 from typing import Any
 
+from ..exceptions import ProtocolConfigError
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -76,9 +78,9 @@ class MeasurementProtocol:
 
     def _validate_common_inputs(self) -> None:
         if self.settle_s < 0:
-            raise ValueError("settle_s must be >= 0")
+            raise ProtocolConfigError("settle_s must be >= 0")
         if self.averaging < 1:
-            raise ValueError("averaging must be >= 1")
+            raise ProtocolConfigError("averaging must be >= 1")
 
     def _sleep(self) -> None:
         if self.settle_s > 0:
@@ -161,17 +163,17 @@ class MeasurementProtocol:
 
     def _require_positive(self, value: float | None, name: str, allow_zero: bool = False) -> None:
         if value is None:
-            raise ValueError(f"{name} is required")
+            raise ProtocolConfigError(f"{name} is required")
         if allow_zero:
             if value < 0:
-                raise ValueError(f"{name} must be >= 0")
+                raise ProtocolConfigError(f"{name} must be >= 0")
             return
         if value <= 0:
-            raise ValueError(f"{name} must be > 0")
+            raise ProtocolConfigError(f"{name} must be > 0")
 
     def _require_state_exists(self, state_name: str) -> None:
         if state_name not in self.contact_map.states:
-            raise ValueError(f"Unknown state: {state_name}")
+            raise ProtocolConfigError(f"Unknown state: {state_name}")
 
     def _apply_measurement_state(self, state_name: str, *, current_sign: float = 1.0, measure_kind: str = "longitudinal") -> list[int]:
         self._require_state_exists(state_name)
@@ -224,7 +226,7 @@ class MeasurementProtocol:
         lockin: bool = True,
     ) -> tuple[list[int], dict[str, dict[str, Any]]]:
         if not measure_channels:
-            raise ValueError("measure_channels must not be empty")
+            raise ProtocolConfigError("measure_channels must not be empty")
         channels = self._apply_measurement_state(state_name, current_sign=current_sign, measure_kind=measure_kind)
         LOGGER.info(
             "Starting multi-channel measurement protocol=%s state=%s source=%s channels=%s lockin=%s",

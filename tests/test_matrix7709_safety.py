@@ -1,5 +1,6 @@
 import pytest
 
+from electrical_measurements.exceptions import MatrixSwitchError
 from electrical_measurements.instruments.mock import MockM81Controller
 from electrical_measurements.switching.contact_map import ContactMap
 from electrical_measurements.switching.matrix7709 import Matrix7709
@@ -12,7 +13,7 @@ def test_matrix_blocks_switching_with_active_source():
     m81 = MockM81Controller()
     matrix = Matrix7709.from_config(config, contact_map=contact_map, m81=m81)
     m81.enable_source("S1")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(MatrixSwitchError):
         matrix.apply_state("I_AB_V_CD")
 
 
