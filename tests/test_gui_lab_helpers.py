@@ -14,6 +14,7 @@ from electrical_measurements.gui.app import (
     parse_required_float,
     parse_required_int,
     parse_optional_positive_int,
+    parse_optional_positive_float,
     plottable_columns,
     preview_csv_text,
     protocol_is_multi_state,
@@ -112,6 +113,11 @@ def test_measure_mode_mapping_helpers():
 def test_parse_optional_positive_int_defaults_and_validates():
     assert parse_optional_positive_int("", "Harmonic", default=3) == 3
     assert parse_optional_positive_int("5", "Harmonic", default=1) == 5
+
+
+def test_parse_optional_positive_float_defaults_and_validates():
+    assert parse_optional_positive_float("", "NPLC", default=2.5) == 2.5
+    assert parse_optional_positive_float("0.7", "Time constant", default=0.3) == 0.7
 
 
 def test_format_measure_summary_renders_modes_and_harmonics():

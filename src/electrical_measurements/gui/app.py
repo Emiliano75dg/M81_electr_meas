@@ -33,6 +33,7 @@ ENVIRONMENT_MODES = ["integrated", "async-poll", "standalone"]
 PLOT_PREFERRED_COLUMNS = ["field_t", "temperature_k", "rxx_ohm", "rxy_ohm", "lockin_x", "lockin_r", "dc_value"]
 MANUAL_SOURCE_MODES = ["DC current", "DC voltage", "AC current", "AC voltage"]
 MEASURE_ACQUISITION_MODES = ["Auto", "Lock-in", "DC"]
+LOCKIN_ROLLOFFS = ["R6", "R12", "R18", "R24"]
 LIVE_PLOT_X_COLUMNS = ["sample_index", "elapsed_s", "field_t", "temperature_k"]
 LIVE_PLOT_Y_COLUMNS = ["x", "y", "r", "theta_deg", "value", "x_dual", "r_dual"]
 
@@ -194,6 +195,13 @@ def parse_optional_positive_int(value: str, name: str, default: int = 1) -> int:
     return parse_required_int(stripped, name, minimum=1)
 
 
+def parse_optional_positive_float(value: str, name: str, default: float) -> float:
+    stripped = value.strip()
+    if not stripped:
+        return default
+    return parse_required_float(stripped, name, positive=True)
+
+
 def format_measure_summary(measures: dict[str, object] | None) -> str:
     if not isinstance(measures, dict) or not measures:
         return "Measures: --"
@@ -294,6 +302,9 @@ class MeasurementGUI:
         self.live_measure_channel_var = tk.StringVar(value="M1")
         self.measure_mode_vars = {channel: tk.StringVar(value="Auto") for channel in ["M1", "M2", "M3"]}
         self.measure_harmonic_vars = {channel: tk.StringVar(value="1") for channel in ["M1", "M2", "M3"]}
+        self.measure_nplc_vars = {channel: tk.StringVar(value="1.0") for channel in ["M1", "M2", "M3"]}
+        self.measure_time_constant_vars = {channel: tk.StringVar(value="0.3") for channel in ["M1", "M2", "M3"]}
+        self.measure_rolloff_vars = {channel: tk.StringVar(value="R24") for channel in ["M1", "M2", "M3"]}
         self.live_plot_x_var = tk.StringVar(value="elapsed_s")
         self.live_plot_y_var = tk.StringVar(value="x")
         self.live_interval_var = tk.StringVar(value="0.25")
@@ -517,9 +528,27 @@ class MeasurementGUI:
         ttk.Entry(manual, textvariable=self.measure_harmonic_vars["M2"], width=8).grid(row=8, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
         ttk.Label(manual, text="M3 harmonic").grid(row=9, column=2, sticky="w", padx=(12, 0), pady=(6, 0))
         ttk.Entry(manual, textvariable=self.measure_harmonic_vars["M3"], width=8).grid(row=9, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M1 NPLC").grid(row=7, column=4, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_nplc_vars["M1"], width=8).grid(row=7, column=5, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M2 NPLC").grid(row=8, column=4, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_nplc_vars["M2"], width=8).grid(row=8, column=5, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M3 NPLC").grid(row=9, column=4, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_nplc_vars["M3"], width=8).grid(row=9, column=5, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M1 tau (s)").grid(row=7, column=6, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_time_constant_vars["M1"], width=8).grid(row=7, column=7, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M2 tau (s)").grid(row=8, column=6, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_time_constant_vars["M2"], width=8).grid(row=8, column=7, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M3 tau (s)").grid(row=9, column=6, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_time_constant_vars["M3"], width=8).grid(row=9, column=7, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M1 rolloff").grid(row=7, column=8, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Combobox(manual, textvariable=self.measure_rolloff_vars["M1"], values=LOCKIN_ROLLOFFS, state="readonly", width=6).grid(row=7, column=9, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M2 rolloff").grid(row=8, column=8, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Combobox(manual, textvariable=self.measure_rolloff_vars["M2"], values=LOCKIN_ROLLOFFS, state="readonly", width=6).grid(row=8, column=9, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M3 rolloff").grid(row=9, column=8, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Combobox(manual, textvariable=self.measure_rolloff_vars["M3"], values=LOCKIN_ROLLOFFS, state="readonly", width=6).grid(row=9, column=9, sticky="w", padx=(8, 0), pady=(6, 0))
         manual_buttons = ttk.Frame(manual)
         manual_buttons.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        ttk.Button(manual_buttons, text="Apply Measure Modes", command=self._manual_apply_measure_modes).pack(side="left")
+        ttk.Button(manual_buttons, text="Apply Measure Settings", command=self._manual_apply_measure_modes).pack(side="left")
         ttk.Button(manual_buttons, text="Configure Source", command=self._manual_configure_source).pack(side="left")
         ttk.Button(manual_buttons, text="Enable Source", command=self._manual_enable_source).pack(side="left", padx=(8, 0))
         ttk.Button(manual_buttons, text="Disable Source", command=self._manual_disable_selected_source).pack(side="left", padx=(8, 0))
@@ -1113,6 +1142,12 @@ class MeasurementGUI:
             variable.set(backend_measure_mode_to_ui(preferred))
             preferred_harmonic = settings.get("preferred_harmonic") if isinstance(settings, dict) else 1
             self.measure_harmonic_vars[channel].set(str(preferred_harmonic or 1))
+            preferred_nplc = settings.get("preferred_nplc") if isinstance(settings, dict) else 1.0
+            self.measure_nplc_vars[channel].set(str(preferred_nplc or 1.0))
+            preferred_time_constant = settings.get("preferred_time_constant_s") if isinstance(settings, dict) else 0.3
+            self.measure_time_constant_vars[channel].set(str(preferred_time_constant or 0.3))
+            preferred_rolloff = settings.get("preferred_rolloff") if isinstance(settings, dict) else "R24"
+            self.measure_rolloff_vars[channel].set(str(preferred_rolloff or "R24"))
 
     def _selected_measure_mode(self, measure_channel: str) -> str:
         variable = self.measure_mode_vars.get(measure_channel)
@@ -1122,23 +1157,46 @@ class MeasurementGUI:
         variable = self.measure_harmonic_vars.get(measure_channel)
         return parse_optional_positive_int(variable.get() if variable else "1", f"{measure_channel} harmonic", default=1)
 
+    def _selected_measure_nplc(self, measure_channel: str) -> float:
+        variable = self.measure_nplc_vars.get(measure_channel)
+        return parse_optional_positive_float(variable.get() if variable else "1.0", f"{measure_channel} NPLC", default=1.0)
+
+    def _selected_measure_time_constant(self, measure_channel: str) -> float:
+        variable = self.measure_time_constant_vars.get(measure_channel)
+        return parse_optional_positive_float(variable.get() if variable else "0.3", f"{measure_channel} time constant", default=0.3)
+
+    def _selected_measure_rolloff(self, measure_channel: str) -> str:
+        variable = self.measure_rolloff_vars.get(measure_channel)
+        return str(variable.get() if variable else "R24").strip().upper() or "R24"
+
     def _apply_measure_mode_to_channel(self, measure_channel: str) -> str:
         if not self.live_m81:
             raise ValueError("Connect live instruments first")
         requested_mode = self._selected_measure_mode(measure_channel)
         requested_harmonic = self._selected_measure_harmonic(measure_channel)
+        requested_nplc = self._selected_measure_nplc(measure_channel)
+        requested_time_constant = self._selected_measure_time_constant(measure_channel)
+        requested_rolloff = self._selected_measure_rolloff(measure_channel)
         if hasattr(self.live_m81, "set_preferred_measure_mode"):
             self.live_m81.set_preferred_measure_mode(measure_channel, requested_mode)
         if hasattr(self.live_m81, "set_preferred_measure_harmonic"):
             self.live_m81.set_preferred_measure_harmonic(measure_channel, requested_harmonic)
+        if hasattr(self.live_m81, "set_preferred_measure_nplc"):
+            self.live_m81.set_preferred_measure_nplc(measure_channel, requested_nplc)
+        if hasattr(self.live_m81, "set_preferred_measure_time_constant"):
+            self.live_m81.set_preferred_measure_time_constant(measure_channel, requested_time_constant)
+        if hasattr(self.live_m81, "set_preferred_measure_rolloff"):
+            self.live_m81.set_preferred_measure_rolloff(measure_channel, requested_rolloff)
         resolved_mode = self.live_m81.resolve_measure_mode(measure_channel, requested_mode) if hasattr(self.live_m81, "resolve_measure_mode") else requested_mode
         if resolved_mode == "dc":
-            self.live_m81.configure_dc_measure(measure_channel)
+            self.live_m81.configure_dc_measure(measure_channel, nplc=requested_nplc)
         elif resolved_mode == "lockin":
             self.live_m81.configure_lockin_measure(
                 measure_channel=measure_channel,
                 harmonic=requested_harmonic,
+                time_constant_s=requested_time_constant,
                 reference_source=self.manual_source_var.get(),
+                rolloff=requested_rolloff,
             )
         return resolved_mode
 
@@ -1183,6 +1241,9 @@ class MeasurementGUI:
             raise ValueError(f"Unsupported source mode: {mode}")
         requested_measure_mode = self._selected_measure_mode(measure_channel)
         requested_measure_harmonic = self._selected_measure_harmonic(measure_channel)
+        requested_measure_nplc = self._selected_measure_nplc(measure_channel)
+        requested_measure_time_constant = self._selected_measure_time_constant(measure_channel)
+        requested_measure_rolloff = self._selected_measure_rolloff(measure_channel)
         if requested_measure_mode == "auto":
             requested_measure_mode = "dc" if mode.startswith("DC") else "lockin"
             if hasattr(self.live_m81, "set_preferred_measure_mode"):
@@ -1192,13 +1253,21 @@ class MeasurementGUI:
                 self.live_m81.set_preferred_measure_mode(measure_channel, requested_measure_mode)
         if hasattr(self.live_m81, "set_preferred_measure_harmonic"):
             self.live_m81.set_preferred_measure_harmonic(measure_channel, requested_measure_harmonic)
+        if hasattr(self.live_m81, "set_preferred_measure_nplc"):
+            self.live_m81.set_preferred_measure_nplc(measure_channel, requested_measure_nplc)
+        if hasattr(self.live_m81, "set_preferred_measure_time_constant"):
+            self.live_m81.set_preferred_measure_time_constant(measure_channel, requested_measure_time_constant)
+        if hasattr(self.live_m81, "set_preferred_measure_rolloff"):
+            self.live_m81.set_preferred_measure_rolloff(measure_channel, requested_measure_rolloff)
         if requested_measure_mode == "dc":
-            self.live_m81.configure_dc_measure(measure_channel)
+            self.live_m81.configure_dc_measure(measure_channel, nplc=requested_measure_nplc)
         else:
             self.live_m81.configure_lockin_measure(
                 measure_channel=measure_channel,
                 harmonic=requested_measure_harmonic,
+                time_constant_s=requested_measure_time_constant,
                 reference_source=source,
+                rolloff=requested_measure_rolloff,
             )
         return source, mode, setpoint, frequency_hz, harmonic, measure_channel
 

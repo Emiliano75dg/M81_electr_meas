@@ -8,10 +8,14 @@ def test_mock_status_snapshots_include_live_fields():
     env = MockEnvironmentController(temperature_k=295.0, field_t=0.25)
     m81.enable_source("S1")
     m81.set_preferred_measure_mode("M2", "dc")
+    m81.set_preferred_measure_nplc("M2", 2.0)
+    m81.set_preferred_measure_time_constant("M1", 0.8)
     m81_snapshot = m81.status_snapshot()
     env_snapshot = env.status_snapshot()
     assert m81_snapshot["sources"]["S1"]["enabled"] is True
     assert m81_snapshot["measures"]["M2"]["preferred_mode"] == "dc"
+    assert m81_snapshot["measures"]["M2"]["preferred_nplc"] == 2.0
+    assert m81_snapshot["measures"]["M1"]["preferred_time_constant_s"] == 0.8
     assert env_snapshot["temperature_k"] == 295.0
     assert env_snapshot["field_t"] == 0.25
 

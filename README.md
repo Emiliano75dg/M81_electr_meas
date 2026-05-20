@@ -44,6 +44,18 @@ instruments:
       M1: 1
       M2: 2
       M3: 3
+    measure_nplc:
+      M1: 1.0
+      M2: 2.0
+      M3: 1.0
+    measure_time_constants_s:
+      M1: 0.3
+      M2: 1.0
+      M3: 0.3
+    measure_rolloffs:
+      M1: R24
+      M2: R12
+      M3: R24
   daq6510:
     enabled: true
     resource: MOCK::DAQ6510
@@ -66,7 +78,19 @@ output:
 - `1`: fondamentale
 - `2`, `3`, ...: armoniche superiori
 
-La GUI Live permette di cambiare sia `mode` sia `harmonic` per `M1/M2/M3`, mentre i protocolli automatici usano le preferenze configurate nel file YAML quando presenti.
+`measure_nplc` e facoltativo e definisce il tempo di integrazione per i canali configurati in modalita `dc`:
+
+- valori positivi come `0.1`, `1.0`, `5.0`
+
+`measure_time_constants_s` e facoltativo e definisce la costante di tempo del lock-in per i canali in modalita `lockin`:
+
+- valori positivi in secondi come `0.1`, `0.3`, `1.0`
+
+`measure_rolloffs` e facoltativo e definisce il rolloff del lock-in per canale:
+
+- `R6`, `R12`, `R18`, `R24`
+
+La GUI Live permette di cambiare `mode`, `harmonic`, `NPLC`, `time constant` e `rolloff` per `M1/M2/M3`, mentre i protocolli automatici usano le preferenze configurate nel file YAML quando presenti.
 
 Per un backend ambiente reale HTTP:
 

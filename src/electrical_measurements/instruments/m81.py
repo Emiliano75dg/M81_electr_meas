@@ -9,6 +9,7 @@ from .m81_scpi_fallback import M81SCPIFallback
 
 LOGGER = logging.getLogger(__name__)
 VALID_MEASURE_MODES = {"auto", "dc", "lockin"}
+VALID_LOCKIN_ROLLOFFS = {"R6", "R12", "R18", "R24"}
 
 try:
     from lakeshore import SSMSystem
@@ -42,6 +43,9 @@ class M81Controller:
         self._measure_state: dict[str, dict[str, Any]] = {}
         self._preferred_measure_modes: dict[str, str] = {}
         self._preferred_measure_harmonics: dict[str, int] = {}
+        self._preferred_measure_nplc: dict[str, float] = {}
+        self._preferred_measure_time_constants: dict[str, float] = {}
+        self._preferred_measure_rolloffs: dict[str, str] = {}
         self._measurement_context: dict[str, Any] = {}
         self._trace_config: dict[str, Any] = {}
         self.scpi = M81SCPIFallback(system)
@@ -90,10 +94,28 @@ class M81Controller:
                 self.set_preferred_measure_mode(measure_channel, mode)
         harmonics = self.config.get("measure_harmonics", {})
         if not isinstance(harmonics, dict):
-            return
+            harmonics = {}
         for measure_channel, harmonic in harmonics.items():
             if isinstance(measure_channel, str) and isinstance(harmonic, int):
                 self.set_preferred_measure_harmonic(measure_channel, harmonic)
+        nplc_values = self.config.get("measure_nplc", {})
+        if not isinstance(nplc_values, dict):
+            nplc_values = {}
+        for measure_channel, nplc in nplc_values.items():
+            if isinstance(measure_channel, str) and isinstance(nplc, (int, float)):
+                self.set_preferred_measure_nplc(measure_channel, float(nplc))
+        time_constants = self.config.get("measure_time_constants_s", {})
+        if not isinstance(time_constants, dict):
+            time_constants = {}
+        for measure_channel, time_constant_s in time_constants.items():
+            if isinstance(measure_channel, str) and isinstance(time_constant_s, (int, float)):
+                self.set_preferred_measure_time_constant(measure_channel, float(time_constant_s))
+        rolloffs = self.config.get("measure_rolloffs", {})
+        if not isinstance(rolloffs, dict):
+            return
+        for measure_channel, rolloff in rolloffs.items():
+            if isinstance(measure_channel, str) and isinstance(rolloff, str):
+                self.set_preferred_measure_rolloff(measure_channel, rolloff)
 
     def set_preferred_measure_mode(self, measure_channel: str, mode: str) -> None:
         normalized = str(mode).strip().lower()
@@ -110,16 +132,37 @@ class M81Controller:
     def get_preferred_measure_harmonic(self, measure_channel: str) -> int | None:
         return self._preferred_measure_harmonics.get(measure_channel)
 
+    def set_preferred_measure_nplc(self, measure_channel: str, nplc: float) -> None:
+        parsed = float(nplc)
+        if parsed <= 0:
+            raise ValueError(f"Unsupported measure nplc for {measure_channel}: {nplc}")
+        self._preferred_measure_nplc[measure_channel] = parsed
+
+    def set_preferred_measure_time_constant(self, measure_channel: str, time_constant_s: float) -> None:
+        parsed = float(time_constant_s)
+        if parsed <= 0:
+            raise ValueError(f"Unsupported measure time constant for {measure_channel}: {time_constant_s}")
+        self._preferred_measure_time_constants[measure_channel] = parsed
+
+    def set_preferred_measure_rolloff(self, measure_channel: str, rolloff: str) -> None:
+        normalized = str(rolloff).strip().upper()
+        if normalized not in VALID_LOCKIN_ROLLOFFS:
+            raise ValueError(f"Unsupported measure rolloff for {measure_channel}: {rolloff}")
+        self._preferred_measure_rolloffs[measure_channel] = normalized
+
     def resolve_measure_harmonic(self, measure_channel: str, requested_harmonic: int | None = None) -> int:
         if requested_harmonic is not None:
             parsed = int(requested_harmonic)
             if parsed < 1:
                 raise ValueError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}")
             return parsed
+        preferred_harmonic = self._preferred_measure_harmonics.get(measure_channel)
+        if isinstance(preferred_harmonic, int) and preferred_harmonic >= 1:
+            return int(preferred_harmonic)
         configured_harmonic = self._measure_state.get(measure_channel, {}).get("harmonic")
         if isinstance(configured_harmonic, int) and configured_harmonic >= 1:
             return configured_harmonic
-        return int(self._preferred_measure_harmonics.get(measure_channel, 1))
+        return 1
 
     def resolve_measure_mode(self, measure_channel: str, requested_mode: str = "auto") -> str:
         normalized = str(requested_mode).strip().lower()
@@ -127,13 +170,59 @@ class M81Controller:
             raise ValueError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}")
         if normalized != "auto":
             return normalized
-        configured_mode = self._measure_state.get(measure_channel, {}).get("mode")
-        if isinstance(configured_mode, str) and configured_mode in VALID_MEASURE_MODES - {"auto"}:
-            return configured_mode
         preferred_mode = self._preferred_measure_modes.get(measure_channel, "auto")
         if preferred_mode in VALID_MEASURE_MODES - {"auto"}:
             return preferred_mode
+        configured_mode = self._measure_state.get(measure_channel, {}).get("mode")
+        if isinstance(configured_mode, str) and configured_mode in VALID_MEASURE_MODES - {"auto"}:
+            return configured_mode
         return "auto"
+
+    def resolve_measure_nplc(self, measure_channel: str, requested_nplc: float | None = None) -> float:
+        if requested_nplc is not None:
+            parsed = float(requested_nplc)
+            if parsed <= 0:
+                raise ValueError(f"Unsupported requested nplc for {measure_channel}: {requested_nplc}")
+            return parsed
+        preferred_nplc = self._preferred_measure_nplc.get(measure_channel)
+        if isinstance(preferred_nplc, (int, float)) and float(preferred_nplc) > 0:
+            return float(preferred_nplc)
+        configured_nplc = self._measure_state.get(measure_channel, {}).get("nplc")
+        if isinstance(configured_nplc, (int, float)) and float(configured_nplc) > 0:
+            return float(configured_nplc)
+        return 1.0
+
+    def resolve_measure_time_constant(self, measure_channel: str, requested_time_constant_s: float | None = None) -> float:
+        if requested_time_constant_s is not None:
+            parsed = float(requested_time_constant_s)
+            if parsed <= 0:
+                raise ValueError(f"Unsupported requested time constant for {measure_channel}: {requested_time_constant_s}")
+            return parsed
+        preferred_time_constant_s = self._preferred_measure_time_constants.get(measure_channel)
+        if isinstance(preferred_time_constant_s, (int, float)) and float(preferred_time_constant_s) > 0:
+            return float(preferred_time_constant_s)
+        configured_time_constant_s = self._measure_state.get(measure_channel, {}).get("time_constant_s")
+        if isinstance(configured_time_constant_s, (int, float)) and float(configured_time_constant_s) > 0:
+            return float(configured_time_constant_s)
+        return 0.3
+
+    def resolve_measure_rolloff(self, measure_channel: str, requested_rolloff: str | None = None) -> str:
+        if requested_rolloff is not None:
+            normalized = str(requested_rolloff).strip().upper()
+            if normalized not in VALID_LOCKIN_ROLLOFFS:
+                raise ValueError(f"Unsupported requested rolloff for {measure_channel}: {requested_rolloff}")
+            return normalized
+        preferred_rolloff = self._preferred_measure_rolloffs.get(measure_channel)
+        if isinstance(preferred_rolloff, str):
+            normalized = preferred_rolloff.strip().upper()
+            if normalized in VALID_LOCKIN_ROLLOFFS:
+                return normalized
+        configured_rolloff = self._measure_state.get(measure_channel, {}).get("rolloff")
+        if isinstance(configured_rolloff, str):
+            normalized = configured_rolloff.strip().upper()
+            if normalized in VALID_LOCKIN_ROLLOFFS:
+                return normalized
+        return "R24"
 
     def get_source_module(self, source: str) -> Any:
         return self._sources[source]
@@ -322,6 +411,12 @@ class M81Controller:
         settings["resolved_mode"] = self.resolve_measure_mode(measure_channel)
         settings["preferred_harmonic"] = self._preferred_measure_harmonics.get(measure_channel, 1)
         settings["resolved_harmonic"] = self.resolve_measure_harmonic(measure_channel)
+        settings["preferred_nplc"] = self._preferred_measure_nplc.get(measure_channel, 1.0)
+        settings["resolved_nplc"] = self.resolve_measure_nplc(measure_channel)
+        settings["preferred_time_constant_s"] = self._preferred_measure_time_constants.get(measure_channel, 0.3)
+        settings["resolved_time_constant_s"] = self.resolve_measure_time_constant(measure_channel)
+        settings["preferred_rolloff"] = self._preferred_measure_rolloffs.get(measure_channel, "R24")
+        settings["resolved_rolloff"] = self.resolve_measure_rolloff(measure_channel)
         return settings
 
     def set_measurement_context(self, **context: Any) -> None:

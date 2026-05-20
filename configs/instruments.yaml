@@ -12,6 +12,18 @@ instruments:
       M1: 1
       M2: 2
       M3: 3
+    measure_nplc:
+      M1: 1.0
+      M2: 2.0
+      M3: 1.0
+    measure_time_constants_s:
+      M1: 0.3
+      M2: 1.0
+      M3: 0.3
+    measure_rolloffs:
+      M1: R24
+      M2: R12
+      M3: R24
   daq6510:
     enabled: true
     resource: MOCK::DAQ6510

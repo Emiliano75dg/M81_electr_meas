@@ -85,6 +85,9 @@ def test_mock_controller_loads_per_channel_harmonics_from_config():
             "m81": {
                 "measure_modes": {"M1": "lockin", "M2": "dc"},
                 "measure_harmonics": {"M1": 3, "M3": 5},
+                "measure_nplc": {"M2": 2.5},
+                "measure_time_constants_s": {"M1": 0.7, "M3": 1.2},
+                "measure_rolloffs": {"M1": "R12"},
             }
         }
     }
@@ -92,6 +95,9 @@ def test_mock_controller_loads_per_channel_harmonics_from_config():
     assert m81.get_measure_settings("M1")["preferred_harmonic"] == 3
     assert m81.get_measure_settings("M3")["preferred_harmonic"] == 5
     assert m81.get_measure_settings("M2")["preferred_mode"] == "dc"
+    assert m81.get_measure_settings("M2")["preferred_nplc"] == 2.5
+    assert m81.get_measure_settings("M1")["preferred_time_constant_s"] == 0.7
+    assert m81.get_measure_settings("M1")["preferred_rolloff"] == "R12"
 
 
 def test_protocol_setup_uses_per_channel_lockin_harmonic():
@@ -112,6 +118,51 @@ def test_protocol_setup_uses_per_channel_lockin_harmonic():
     )
     protocol.setup()
     assert m81.get_measure_settings("M2")["resolved_harmonic"] == 3
+
+
+def test_protocol_setup_uses_per_channel_dc_nplc():
+    config = {"instruments": {"daq6510": {"resource": "MOCK::DAQ6510"}}}
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    m81 = MockM81Controller()
+    m81.set_preferred_measure_mode("M1", "dc")
+    m81.set_preferred_measure_nplc("M1", 2.5)
+    matrix = Matrix7709.from_config(config, contact_map=contact_map, m81=m81)
+    protocol = VanDerPauwProtocol(
+        m81=m81,
+        matrix=matrix,
+        contact_map=contact_map,
+        sample_id="sample",
+        settle_s=0.0,
+        current_rms_a=10e-6,
+        frequency_hz=13.7,
+    )
+    protocol.setup()
+    settings = m81.get_measure_settings("M1")
+    assert settings["resolved_mode"] == "dc"
+    assert settings["nplc"] == 2.5
+
+
+def test_protocol_setup_uses_per_channel_lockin_time_constant_and_rolloff():
+    config = {"instruments": {"daq6510": {"resource": "MOCK::DAQ6510"}}}
+    contact_map = ContactMap.from_yaml("configs/contact_maps/hallbar_6contacts_7709.yaml")
+    m81 = MockM81Controller()
+    m81.set_preferred_measure_time_constant("M2", 0.9)
+    m81.set_preferred_measure_rolloff("M2", "R12")
+    matrix = Matrix7709.from_config(config, contact_map=contact_map, m81=m81)
+    protocol = HallProtocol(
+        m81=m81,
+        matrix=matrix,
+        contact_map=contact_map,
+        sample_id="sample",
+        settle_s=0.0,
+        current_rms_a=10e-6,
+        frequency_hz=13.7,
+    )
+    protocol.setup()
+    settings = m81.get_measure_settings("M2")
+    assert settings["resolved_mode"] == "lockin"
+    assert settings["time_constant_s"] == 0.9
+    assert settings["rolloff"] == "R12"
 
 
 def test_vanderpauw_can_run_with_dc_measure_mode():

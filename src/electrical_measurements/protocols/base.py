@@ -140,13 +140,22 @@ class MeasurementProtocol:
     ) -> tuple[str, int | None]:
         mode = self._resolve_channel_measure_mode(measure_channel, default_lockin=default_lockin)
         if mode == "dc":
-            self.m81.configure_dc_measure(measure_channel)
+            nplc = self.m81.resolve_measure_nplc(measure_channel, None) if hasattr(self.m81, "resolve_measure_nplc") else 1.0
+            self.m81.configure_dc_measure(measure_channel, nplc=nplc)
             return mode, None
         harmonic = self._resolve_channel_harmonic(measure_channel, default_harmonic=default_harmonic)
+        time_constant_s = (
+            self.m81.resolve_measure_time_constant(measure_channel, None)
+            if hasattr(self.m81, "resolve_measure_time_constant")
+            else 0.3
+        )
+        rolloff = self.m81.resolve_measure_rolloff(measure_channel, None) if hasattr(self.m81, "resolve_measure_rolloff") else "R24"
         self.m81.configure_lockin_measure(
             measure_channel=measure_channel,
             harmonic=harmonic,
+            time_constant_s=time_constant_s,
             reference_source=source,
+            rolloff=rolloff,
         )
         return "lockin", harmonic
 
