@@ -9,6 +9,8 @@ def test_build_run_namespace_sets_expected_defaults():
     assert args.temperatures == "300"
     assert args.fields == "0,1"
     assert args.environment_mode == "async-poll"
+    assert args.include_reciprocity is False
+    assert args.include_anisotropy is False
 
 
 def test_parser_supports_gui_command():
@@ -18,3 +20,17 @@ def test_parser_supports_gui_command():
     assert args.mock is True
     assert args.environment_mode == "standalone"
     assert callable(args.func)
+
+
+def test_parser_supports_vdp_hall_reciprocity_flag():
+    parser = build_parser()
+    args = parser.parse_args(["run", "--protocol", "vdp_hall", "--include-reciprocity"])
+    assert args.protocol == "vdp_hall"
+    assert args.include_reciprocity is True
+
+
+def test_parser_supports_vdp_anisotropy_flag():
+    parser = build_parser()
+    args = parser.parse_args(["run", "--protocol", "vdp", "--include-anisotropy"])
+    assert args.protocol == "vdp"
+    assert args.include_anisotropy is True

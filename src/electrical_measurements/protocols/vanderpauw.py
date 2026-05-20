@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..analysis.reciprocity import reciprocity_error
-from ..analysis.vanderpauw import solve_vanderpauw_sheet_resistance
+from ..analysis.vanderpauw import compute_vanderpauw_anisotropy, solve_vanderpauw_sheet_resistance
 from .base import MeasurementPoint, MeasurementProtocol
 
 
@@ -14,16 +14,20 @@ class VanDerPauwProtocol(MeasurementProtocol):
         states: list[str] | None = None,
         current_rms_a: float = 10e-6,
         frequency_hz: float = 13.7,
+        harmonic: int = 1,
         measure_channel: str = "M1",
         source: str = "S1",
+        include_anisotropy: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.states = states or ["I_AB_V_CD", "I_BC_V_DA", "I_CD_V_AB", "I_DA_V_BC"]
         self.current_rms_a = current_rms_a
         self.frequency_hz = frequency_hz
+        self.harmonic = harmonic
         self.measure_channel = measure_channel
         self.source = source
+        self.include_anisotropy = include_anisotropy
 
     def setup(self) -> None:
         self._require_positive(self.current_rms_a, "current_rms_a")
@@ -35,7 +39,13 @@ class VanDerPauwProtocol(MeasurementProtocol):
             current_rms_a=self.current_rms_a,
             frequency_hz=self.frequency_hz,
             measure_channels=[self.measure_channel],
-            harmonic=1,
+            harmonic=self.harmonic,
+        )
+        self._prepare_measure_channel(
+            self.measure_channel,
+            source=self.source,
+            default_lockin=True,
+            default_harmonic=self.harmonic,
         )
 
     def measure_point(self, temperature_k: float | None = None, field_t: float | None = None) -> MeasurementPoint:
@@ -51,9 +61,10 @@ class VanDerPauwProtocol(MeasurementProtocol):
                 current_sign=1.0,
                 lockin=True,
             )
-            resistance = raw["x"] / self.current_rms_a
+            raw_value = raw.get("x", raw.get("value"))
+            resistance = raw_value / self.current_rms_a
             resistances[state] = resistance
-            raw_measurements[state] = raw["x"]
+            raw_measurements[state] = raw_value
         for state in self.states:
             reciprocal_name = self.contact_map.get_state_name(state, "reciprocal")
             if reciprocal_name and reciprocal_name in resistances and state in resistances:
@@ -62,6 +73,7 @@ class VanDerPauwProtocol(MeasurementProtocol):
             resistances.get("I_AB_V_CD", 0.0),
             resistances.get("I_BC_V_DA", 0.0),
         )
+        anisotropy = compute_vanderpauw_anisotropy(resistances) if self.include_anisotropy else {}
         return MeasurementPoint(
             timestamp=self._timestamp(),
             sample_id=self.sample_id,
@@ -74,12 +86,17 @@ class VanDerPauwProtocol(MeasurementProtocol):
             source_current_a_rms=self.current_rms_a,
             source_current_a_peak=self.current_rms_a * 2**0.5,
             frequency_hz=self.frequency_hz,
-            harmonic=1,
+            harmonic=self.harmonic,
             raw=raw_measurements,
             derived={
                 "sheet_resistance_ohm_sq": rs,
                 "reciprocity_checks": reciprocity_checks,
+                **anisotropy,
                 **{f"{k}_ohm": v for k, v in resistances.items()},
             },
-            metadata={"measure_channel": self.measure_channel, "source_channel": self.source},
+            metadata={
+                "measure_channel": self.measure_channel,
+                "source_channel": self.source,
+                "include_anisotropy": self.include_anisotropy,
+            },
         )

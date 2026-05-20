@@ -6,12 +6,15 @@ import math
 import random
 from typing import Any
 
+VALID_MEASURE_MODES = {"auto", "dc", "lockin"}
+
 
 class MockModule:
     def __init__(self, name: str) -> None:
         self.name = name
         self.enabled = False
         self.shape = "DC"
+        self.measure_mode = "dc"
         self.frequency_hz = 0.0
         self.current_amplitude = 0.0
         self.voltage_amplitude = 0.0
@@ -34,9 +37,11 @@ class MockModule:
 
     def setup_dc_measurement(self, nplc: float = 1.0) -> None:
         self.shape = "DC"
+        self.measure_mode = "dc"
         self.nplc = nplc
 
     def setup_lock_in_measurement(self, reference_source: str, time_constant: float, rolloff: str = "R24", reference_phase_shift: float = 0.0, reference_harmonic: int = 1, use_fir: bool = True) -> None:
+        self.measure_mode = "lockin"
         self.reference_source = reference_source
         self.time_constant = time_constant
         self.harmonic = reference_harmonic
@@ -63,6 +68,8 @@ class MockM81Controller:
     reciprocity_violation_scale: float = 0.0
     _sources: dict[str, MockModule] = field(default_factory=dict)
     _measures: dict[str, MockModule] = field(default_factory=dict)
+    _preferred_measure_modes: dict[str, str] = field(default_factory=dict)
+    _preferred_measure_harmonics: dict[str, int] = field(default_factory=dict)
     _measurement_context: dict[str, Any] = field(default_factory=dict)
     _trace_config: dict[str, Any] = field(default_factory=dict)
     _trace_running: bool = False
@@ -75,13 +82,64 @@ class MockM81Controller:
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "MockM81Controller":
-        return cls()
+        controller = cls()
+        measure_modes = config.get("instruments", {}).get("m81", {}).get("measure_modes", {})
+        if isinstance(measure_modes, dict):
+            for measure_channel, mode in measure_modes.items():
+                if isinstance(measure_channel, str) and isinstance(mode, str):
+                    controller.set_preferred_measure_mode(measure_channel, mode)
+        measure_harmonics = config.get("instruments", {}).get("m81", {}).get("measure_harmonics", {})
+        if isinstance(measure_harmonics, dict):
+            for measure_channel, harmonic in measure_harmonics.items():
+                if isinstance(measure_channel, str) and isinstance(harmonic, int):
+                    controller.set_preferred_measure_harmonic(measure_channel, harmonic)
+        return controller
 
     def get_source_module(self, source: str) -> MockModule:
         return self._sources[source]
 
     def get_measure_module(self, measure_channel: str) -> MockModule:
         return self._measures[measure_channel]
+
+    def set_preferred_measure_mode(self, measure_channel: str, mode: str) -> None:
+        normalized = str(mode).strip().lower()
+        if normalized not in VALID_MEASURE_MODES:
+            raise ValueError(f"Unsupported measure mode for {measure_channel}: {mode}")
+        self._preferred_measure_modes[measure_channel] = normalized
+
+    def set_preferred_measure_harmonic(self, measure_channel: str, harmonic: int) -> None:
+        parsed = int(harmonic)
+        if parsed < 1:
+            raise ValueError(f"Unsupported measure harmonic for {measure_channel}: {harmonic}")
+        self._preferred_measure_harmonics[measure_channel] = parsed
+
+    def get_preferred_measure_harmonic(self, measure_channel: str) -> int | None:
+        return self._preferred_measure_harmonics.get(measure_channel)
+
+    def resolve_measure_mode(self, measure_channel: str, requested_mode: str = "auto") -> str:
+        normalized = str(requested_mode).strip().lower()
+        if normalized not in VALID_MEASURE_MODES:
+            raise ValueError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}")
+        if normalized != "auto":
+            return normalized
+        module = self.get_measure_module(measure_channel)
+        if module.measure_mode in VALID_MEASURE_MODES - {"auto"}:
+            return module.measure_mode
+        preferred = self._preferred_measure_modes.get(measure_channel, "auto")
+        if preferred in VALID_MEASURE_MODES - {"auto"}:
+            return preferred
+        return self._preferred_measure_modes.get(measure_channel, "auto")
+
+    def resolve_measure_harmonic(self, measure_channel: str, requested_harmonic: int | None = None) -> int:
+        if requested_harmonic is not None:
+            parsed = int(requested_harmonic)
+            if parsed < 1:
+                raise ValueError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}")
+            return parsed
+        module = self.get_measure_module(measure_channel)
+        if isinstance(module.harmonic, int) and module.harmonic >= 1:
+            return module.harmonic
+        return int(self._preferred_measure_harmonics.get(measure_channel, 1))
 
     def configure_dc_current(self, source: str, current_a: float, compliance_v: float = 1.0, autorange: bool = True) -> None:
         module = self.get_source_module(source)
@@ -144,9 +202,14 @@ class MockM81Controller:
     def get_measure_settings(self, measure_channel: str) -> dict[str, Any]:
         module = self.get_measure_module(measure_channel)
         return {
+            "mode": module.measure_mode,
             "harmonic": module.harmonic,
             "frequency_hz": module.frequency_hz,
             "reference_source": module.reference_source,
+            "preferred_mode": self._preferred_measure_modes.get(measure_channel, "auto"),
+            "resolved_mode": self.resolve_measure_mode(measure_channel),
+            "preferred_harmonic": self._preferred_measure_harmonics.get(measure_channel, 1),
+            "resolved_harmonic": self.resolve_measure_harmonic(measure_channel),
         }
 
     def set_measurement_context(self, **context: Any) -> None:
@@ -261,10 +324,7 @@ class MockM81Controller:
                 for name, module in self._sources.items()
             },
             "measures": {
-                name: {
-                    "harmonic": module.harmonic,
-                    "frequency_hz": module.frequency_hz,
-                }
+                name: self.get_measure_settings(name)
                 for name, module in self._measures.items()
             },
         }

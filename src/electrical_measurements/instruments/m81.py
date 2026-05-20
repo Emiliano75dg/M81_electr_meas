@@ -8,6 +8,7 @@ from typing import Any
 from .m81_scpi_fallback import M81SCPIFallback
 
 LOGGER = logging.getLogger(__name__)
+VALID_MEASURE_MODES = {"auto", "dc", "lockin"}
 
 try:
     from lakeshore import SSMSystem
@@ -39,10 +40,13 @@ class M81Controller:
         self._measures: dict[str, Any] = {}
         self._source_state: dict[str, SourceConfig] = {}
         self._measure_state: dict[str, dict[str, Any]] = {}
+        self._preferred_measure_modes: dict[str, str] = {}
+        self._preferred_measure_harmonics: dict[str, int] = {}
         self._measurement_context: dict[str, Any] = {}
         self._trace_config: dict[str, Any] = {}
         self.scpi = M81SCPIFallback(system)
         self._discover_modules()
+        self._load_measure_mode_preferences()
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "M81Controller":
@@ -76,6 +80,60 @@ class M81Controller:
                 self._measures[measure_name] = self.system.get_measure_module(idx)
             except Exception:
                 continue
+
+    def _load_measure_mode_preferences(self) -> None:
+        configured = self.config.get("measure_modes", {})
+        if not isinstance(configured, dict):
+            configured = {}
+        for measure_channel, mode in configured.items():
+            if isinstance(measure_channel, str) and isinstance(mode, str):
+                self.set_preferred_measure_mode(measure_channel, mode)
+        harmonics = self.config.get("measure_harmonics", {})
+        if not isinstance(harmonics, dict):
+            return
+        for measure_channel, harmonic in harmonics.items():
+            if isinstance(measure_channel, str) and isinstance(harmonic, int):
+                self.set_preferred_measure_harmonic(measure_channel, harmonic)
+
+    def set_preferred_measure_mode(self, measure_channel: str, mode: str) -> None:
+        normalized = str(mode).strip().lower()
+        if normalized not in VALID_MEASURE_MODES:
+            raise ValueError(f"Unsupported measure mode for {measure_channel}: {mode}")
+        self._preferred_measure_modes[measure_channel] = normalized
+
+    def set_preferred_measure_harmonic(self, measure_channel: str, harmonic: int) -> None:
+        parsed = int(harmonic)
+        if parsed < 1:
+            raise ValueError(f"Unsupported measure harmonic for {measure_channel}: {harmonic}")
+        self._preferred_measure_harmonics[measure_channel] = parsed
+
+    def get_preferred_measure_harmonic(self, measure_channel: str) -> int | None:
+        return self._preferred_measure_harmonics.get(measure_channel)
+
+    def resolve_measure_harmonic(self, measure_channel: str, requested_harmonic: int | None = None) -> int:
+        if requested_harmonic is not None:
+            parsed = int(requested_harmonic)
+            if parsed < 1:
+                raise ValueError(f"Unsupported requested harmonic for {measure_channel}: {requested_harmonic}")
+            return parsed
+        configured_harmonic = self._measure_state.get(measure_channel, {}).get("harmonic")
+        if isinstance(configured_harmonic, int) and configured_harmonic >= 1:
+            return configured_harmonic
+        return int(self._preferred_measure_harmonics.get(measure_channel, 1))
+
+    def resolve_measure_mode(self, measure_channel: str, requested_mode: str = "auto") -> str:
+        normalized = str(requested_mode).strip().lower()
+        if normalized not in VALID_MEASURE_MODES:
+            raise ValueError(f"Unsupported requested measure mode for {measure_channel}: {requested_mode}")
+        if normalized != "auto":
+            return normalized
+        configured_mode = self._measure_state.get(measure_channel, {}).get("mode")
+        if isinstance(configured_mode, str) and configured_mode in VALID_MEASURE_MODES - {"auto"}:
+            return configured_mode
+        preferred_mode = self._preferred_measure_modes.get(measure_channel, "auto")
+        if preferred_mode in VALID_MEASURE_MODES - {"auto"}:
+            return preferred_mode
+        return "auto"
 
     def get_source_module(self, source: str) -> Any:
         return self._sources[source]
@@ -259,7 +317,12 @@ class M81Controller:
         return self._source_state[source]
 
     def get_measure_settings(self, measure_channel: str) -> dict[str, Any]:
-        return dict(self._measure_state.get(measure_channel, {}))
+        settings = dict(self._measure_state.get(measure_channel, {}))
+        settings["preferred_mode"] = self._preferred_measure_modes.get(measure_channel, "auto")
+        settings["resolved_mode"] = self.resolve_measure_mode(measure_channel)
+        settings["preferred_harmonic"] = self._preferred_measure_harmonics.get(measure_channel, 1)
+        settings["resolved_harmonic"] = self.resolve_measure_harmonic(measure_channel)
+        return settings
 
     def set_measurement_context(self, **context: Any) -> None:
         self._measurement_context = dict(context)
@@ -394,7 +457,9 @@ class M81Controller:
                 "frequency_hz": settings.frequency_hz,
                 "harmonic": settings.harmonic,
             }
-        measure_status = {name: dict(value) for name, value in self._measure_state.items()}
+        measure_status: dict[str, dict[str, Any]] = {}
+        for name in self._measures:
+            measure_status[name] = self.get_measure_settings(name)
         snapshot = {
             "sources": source_status,
             "measures": measure_status,

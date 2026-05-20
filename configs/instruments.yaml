@@ -4,6 +4,14 @@ instruments:
     enabled: true
     connection:
       kind: mock
+    measure_modes:
+      M1: lockin
+      M2: dc
+      M3: auto
+    measure_harmonics:
+      M1: 1
+      M2: 2
+      M3: 3
   daq6510:
     enabled: true
     resource: MOCK::DAQ6510

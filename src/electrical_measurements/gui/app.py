@@ -23,14 +23,16 @@ from ..runners.run_measurement import (
     run_command,
 )
 from ..instruments.teslatron_client import environment_mode_from_config
+from ..protocols.vdp_hall import default_vdp_hall_states
 from ..switching.contact_map import ContactMap
 
-PROTOCOLS = ["hall", "hallbar_mr", "vdp", "second_harmonic", "reciprocity", "check_contacts"]
+PROTOCOLS = ["hall", "hallbar_mr", "vdp", "vdp_hall", "second_harmonic", "reciprocity", "check_contacts"]
 MODES = ["stable", "stream-ramp"]
 RAMP_QUANTITIES = ["field", "temperature"]
 ENVIRONMENT_MODES = ["integrated", "async-poll", "standalone"]
 PLOT_PREFERRED_COLUMNS = ["field_t", "temperature_k", "rxx_ohm", "rxy_ohm", "lockin_x", "lockin_r", "dc_value"]
 MANUAL_SOURCE_MODES = ["DC current", "DC voltage", "AC current", "AC voltage"]
+MEASURE_ACQUISITION_MODES = ["Auto", "Lock-in", "DC"]
 LIVE_PLOT_X_COLUMNS = ["sample_index", "elapsed_s", "field_t", "temperature_k"]
 LIVE_PLOT_Y_COLUMNS = ["x", "y", "r", "theta_deg", "value", "x_dual", "r_dual"]
 
@@ -40,7 +42,7 @@ def environment_mode_supports_control(environment_mode: str) -> bool:
 
 
 def protocol_is_multi_state(protocol: str) -> bool:
-    return protocol in {"vdp", "reciprocity", "check_contacts"}
+    return protocol in {"vdp", "vdp_hall", "reciprocity", "check_contacts"}
 
 
 def recommended_states_for_protocol(protocol: str, contact_map: ContactMap) -> list[str]:
@@ -53,6 +55,9 @@ def recommended_states_for_protocol(protocol: str, contact_map: ContactMap) -> l
         return preferred or list(states.keys())
     if protocol == "vdp":
         preferred = contact_map.get_states_for_group("vdp")
+        return preferred or list(states.keys())
+    if protocol == "vdp_hall":
+        preferred = default_vdp_hall_states(contact_map)
         return preferred or list(states.keys())
     if protocol == "second_harmonic":
         preferred = [name for name, state in states.items() if state.get("group") == "second_harmonic" or state.get("type") == "second_harmonic"]
@@ -164,6 +169,51 @@ def append_buffered_record(records: list[dict[str, object]], record: dict[str, o
     return updated
 
 
+def ui_measure_mode_to_backend(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "")
+    if normalized == "lockin":
+        return "lockin"
+    if normalized == "dc":
+        return "dc"
+    return "auto"
+
+
+def backend_measure_mode_to_ui(value: str | None) -> str:
+    normalized = str(value or "auto").strip().lower()
+    if normalized == "lockin":
+        return "Lock-in"
+    if normalized == "dc":
+        return "DC"
+    return "Auto"
+
+
+def parse_optional_positive_int(value: str, name: str, default: int = 1) -> int:
+    stripped = value.strip()
+    if not stripped:
+        return default
+    return parse_required_int(stripped, name, minimum=1)
+
+
+def format_measure_summary(measures: dict[str, object] | None) -> str:
+    if not isinstance(measures, dict) or not measures:
+        return "Measures: --"
+    parts: list[str] = []
+    for channel in sorted(measures):
+        details = measures.get(channel)
+        if not isinstance(details, dict):
+            parts.append(f"{channel}: --")
+            continue
+        mode = str(details.get("resolved_mode") or details.get("preferred_mode") or details.get("mode") or "auto").strip().lower()
+        if mode == "lockin":
+            harmonic = details.get("resolved_harmonic") or details.get("preferred_harmonic") or details.get("harmonic") or 1
+            parts.append(f"{channel}: lock-in @ {harmonic}f")
+        elif mode == "dc":
+            parts.append(f"{channel}: DC")
+        else:
+            parts.append(f"{channel}: auto")
+    return f"Measures: {' | '.join(parts)}"
+
+
 def parse_required_float(value: str, name: str, *, positive: bool = False, non_negative: bool = False) -> float:
     try:
         parsed = float(value)
@@ -206,6 +256,8 @@ class MeasurementGUI:
         self.live_acquire_started_at: float | None = None
         self.setup_widgets: dict[str, tk.Widget] = {}
         self.live_environment_widgets: list[tk.Widget] = []
+        self.include_reciprocity_check: ttk.Checkbutton | None = None
+        self.include_anisotropy_check: ttk.Checkbutton | None = None
 
         self.config_var = tk.StringVar(value=getattr(initial_args, "config", "configs/instruments.yaml"))
         self.contact_map_var = tk.StringVar(value=getattr(initial_args, "contact_map", "configs/contact_maps/hallbar_6contacts_7709.yaml"))
@@ -215,6 +267,8 @@ class MeasurementGUI:
         self.mode_var = tk.StringVar(value="stable")
         self.mock_var = tk.BooleanVar(value=True)
         self.dry_run_var = tk.BooleanVar(value=False)
+        self.include_reciprocity_var = tk.BooleanVar(value=False)
+        self.include_anisotropy_var = tk.BooleanVar(value=False)
         self.environment_mode_var = tk.StringVar(value="integrated")
         self.temperatures_var = tk.StringVar(value="300")
         self.fields_var = tk.StringVar(value="0")
@@ -238,6 +292,8 @@ class MeasurementGUI:
         self.manual_harmonic_var = tk.StringVar(value="1")
         self.manual_measure_channel_var = tk.StringVar(value="M1")
         self.live_measure_channel_var = tk.StringVar(value="M1")
+        self.measure_mode_vars = {channel: tk.StringVar(value="Auto") for channel in ["M1", "M2", "M3"]}
+        self.measure_harmonic_vars = {channel: tk.StringVar(value="1") for channel in ["M1", "M2", "M3"]}
         self.live_plot_x_var = tk.StringVar(value="elapsed_s")
         self.live_plot_y_var = tk.StringVar(value="x")
         self.live_interval_var = tk.StringVar(value="0.25")
@@ -250,6 +306,7 @@ class MeasurementGUI:
         self.live_field_var = tk.StringVar(value="B: --")
         self.live_sources_var = tk.StringVar(value="Sources: --")
         self.live_relays_var = tk.StringVar(value="Relays: --")
+        self.live_measures_var = tk.StringVar(value="Measures: --")
         self.live_connection_var = tk.StringVar(value="Disconnected")
         self.live_environment_mode_var = tk.StringVar(value="Env mode: --")
         self.live_environment_action_var = tk.StringVar(value="Env control idle")
@@ -317,6 +374,10 @@ class MeasurementGUI:
         options.grid(row=row, column=0, columnspan=3, sticky="w", pady=(8, 8))
         ttk.Checkbutton(options, text="Mock", variable=self.mock_var).pack(side="left", padx=(0, 12))
         ttk.Checkbutton(options, text="Dry run", variable=self.dry_run_var).pack(side="left")
+        self.include_reciprocity_check = ttk.Checkbutton(options, text="Include reciprocity", variable=self.include_reciprocity_var)
+        self.include_reciprocity_check.pack(side="left", padx=(12, 0))
+        self.include_anisotropy_check = ttk.Checkbutton(options, text="Include anisotropy", variable=self.include_anisotropy_var)
+        self.include_anisotropy_check.pack(side="left", padx=(12, 0))
         row += 1
 
         actions = ttk.Frame(frame)
@@ -378,10 +439,11 @@ class MeasurementGUI:
         ttk.Label(summary, textvariable=self.live_field_var).grid(row=1, column=0, sticky="w")
         ttk.Label(summary, textvariable=self.live_sources_var).grid(row=2, column=0, sticky="w")
         ttk.Label(summary, textvariable=self.live_relays_var).grid(row=3, column=0, sticky="w")
-        ttk.Label(summary, textvariable=self.live_environment_mode_var).grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(summary, textvariable=self.live_environment_action_var).grid(row=5, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(summary, textvariable=self.live_acquisition_var).grid(row=6, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(summary, textvariable=self.live_last_reading_var).grid(row=7, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(summary, textvariable=self.live_measures_var).grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(summary, textvariable=self.live_environment_mode_var).grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(summary, textvariable=self.live_environment_action_var).grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(summary, textvariable=self.live_acquisition_var).grid(row=7, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(summary, textvariable=self.live_last_reading_var).grid(row=8, column=0, sticky="w", pady=(6, 0))
 
         environment = ttk.LabelFrame(frame, text="Environment Controls", padding=10)
         environment.grid(row=2, column=0, sticky="nsew", padx=(0, 8), pady=(10, 8))
@@ -443,14 +505,27 @@ class MeasurementGUI:
         ttk.Entry(manual, textvariable=self.manual_harmonic_var).grid(row=5, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
         ttk.Label(manual, text="Measure ch.").grid(row=6, column=0, sticky="w", pady=(6, 0))
         ttk.Combobox(manual, textvariable=self.manual_measure_channel_var, values=["M1", "M2", "M3"], state="readonly").grid(row=6, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M1 mode").grid(row=7, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(manual, textvariable=self.measure_mode_vars["M1"], values=MEASURE_ACQUISITION_MODES, state="readonly").grid(row=7, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M2 mode").grid(row=8, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(manual, textvariable=self.measure_mode_vars["M2"], values=MEASURE_ACQUISITION_MODES, state="readonly").grid(row=8, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M3 mode").grid(row=9, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(manual, textvariable=self.measure_mode_vars["M3"], values=MEASURE_ACQUISITION_MODES, state="readonly").grid(row=9, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M1 harmonic").grid(row=7, column=2, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_harmonic_vars["M1"], width=8).grid(row=7, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M2 harmonic").grid(row=8, column=2, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_harmonic_vars["M2"], width=8).grid(row=8, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="M3 harmonic").grid(row=9, column=2, sticky="w", padx=(12, 0), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.measure_harmonic_vars["M3"], width=8).grid(row=9, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
         manual_buttons = ttk.Frame(manual)
-        manual_buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        manual_buttons.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Button(manual_buttons, text="Apply Measure Modes", command=self._manual_apply_measure_modes).pack(side="left")
         ttk.Button(manual_buttons, text="Configure Source", command=self._manual_configure_source).pack(side="left")
         ttk.Button(manual_buttons, text="Enable Source", command=self._manual_enable_source).pack(side="left", padx=(8, 0))
         ttk.Button(manual_buttons, text="Disable Source", command=self._manual_disable_selected_source).pack(side="left", padx=(8, 0))
         ttk.Button(manual_buttons, text="Safe Switch Then Enable", command=self._guided_safe_switch_then_enable).pack(side="left", padx=(8, 0))
         guided_buttons = ttk.Frame(manual)
-        guided_buttons.grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        guided_buttons.grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(guided_buttons, text="Safe Switch Then Read", command=self._guided_safe_switch_then_read).pack(side="left")
         ttk.Button(guided_buttons, text="Disable + Open All", command=self._guided_disable_and_open_all).pack(side="left", padx=(8, 0))
         ttk.Button(manual_buttons, text="Apply State", command=self._manual_apply_state).pack(side="left")
@@ -641,15 +716,36 @@ class MeasurementGUI:
         self._update_state_details()
 
     def _update_protocol_state(self) -> None:
-        is_multi = protocol_is_multi_state(self.protocol_var.get())
+        protocol = self.protocol_var.get()
+        is_multi = protocol_is_multi_state(protocol)
         self.state_combo.configure(state="disabled" if is_multi else "readonly")
         self.state_listbox.configure(state="normal" if is_multi else "disabled")
+        self._update_protocol_specific_options(protocol)
         if self.contact_map is not None:
-            recommended = recommended_states_for_protocol(self.protocol_var.get(), self.contact_map)
+            recommended = recommended_states_for_protocol(protocol, self.contact_map)
             if recommended:
                 self.state_name_var.set(recommended[0])
             self._select_recommended_states()
         self._update_state_details()
+
+    def _set_protocol_option_visibility(self, widget: ttk.Checkbutton | None, visible: bool) -> None:
+        if widget is None:
+            return
+        is_visible = widget.winfo_manager() == "pack"
+        if visible and not is_visible:
+            widget.pack(side="left", padx=(12, 0))
+        elif not visible and is_visible:
+            widget.pack_forget()
+
+    def _update_protocol_specific_options(self, protocol: str) -> None:
+        show_reciprocity = protocol == "vdp_hall"
+        show_anisotropy = protocol == "vdp"
+        if not show_reciprocity:
+            self.include_reciprocity_var.set(False)
+        if not show_anisotropy:
+            self.include_anisotropy_var.set(False)
+        self._set_protocol_option_visibility(self.include_reciprocity_check, show_reciprocity)
+        self._set_protocol_option_visibility(self.include_anisotropy_check, show_anisotropy)
 
     def _update_mode_state(self) -> None:
         self._update_environment_mode_state()
@@ -791,6 +887,8 @@ class MeasurementGUI:
             state_name=state_name,
             selected_states=selected_states,
             environment_mode=self.environment_mode_var.get(),
+            include_reciprocity=self.include_reciprocity_var.get(),
+            include_anisotropy=self.include_anisotropy_var.get(),
         )
 
     def _run_measurement(self) -> None:
@@ -837,6 +935,7 @@ class MeasurementGUI:
                 self.contact_map,
                 mock=self.mock_var.get(),
             )
+            self._sync_measure_modes_from_backend()
             self.live_connection_var.set("Connected")
             self.status_var.set("Live instruments connected")
             self._update_live_environment_controls_state()
@@ -877,6 +976,7 @@ class MeasurementGUI:
             self.live_field_var.set("B: --")
             self.live_sources_var.set("Sources: disconnected")
             self.live_relays_var.set("Relays: --")
+            self.live_measures_var.set("Measures: --")
             self.live_environment_mode_var.set("Env mode: --")
             self.live_snapshot_text.delete("1.0", "end")
             self.live_snapshot_text.insert("end", "No live connection.")
@@ -899,6 +999,8 @@ class MeasurementGUI:
         self.live_sources_var.set(f"Sources: {', '.join(sources) if sources else 'all disabled'}")
         relays = matrix.get("closed_channels") if isinstance(matrix, dict) else None
         self.live_relays_var.set(f"Relays: {relays}" if relays is not None else "Relays: --")
+        measures = m81.get("measures") if isinstance(m81, dict) else None
+        self.live_measures_var.set(format_measure_summary(measures if isinstance(measures, dict) else None))
         env_mode = env.get("mode") if isinstance(env, dict) else None
         control_enabled = env.get("control_enabled") if isinstance(env, dict) else None
         if env_mode:
@@ -1002,6 +1104,57 @@ class MeasurementGUI:
     def _set_stringvar_async(self, variable: tk.StringVar, value: str) -> None:
         self.root.after(0, lambda: variable.set(value))
 
+    def _sync_measure_modes_from_backend(self) -> None:
+        if not self.live_m81:
+            return
+        for channel, variable in self.measure_mode_vars.items():
+            settings = self.live_m81.get_measure_settings(channel) if hasattr(self.live_m81, "get_measure_settings") else {}
+            preferred = settings.get("preferred_mode") if isinstance(settings, dict) else None
+            variable.set(backend_measure_mode_to_ui(preferred))
+            preferred_harmonic = settings.get("preferred_harmonic") if isinstance(settings, dict) else 1
+            self.measure_harmonic_vars[channel].set(str(preferred_harmonic or 1))
+
+    def _selected_measure_mode(self, measure_channel: str) -> str:
+        variable = self.measure_mode_vars.get(measure_channel)
+        return ui_measure_mode_to_backend(variable.get() if variable else "Auto")
+
+    def _selected_measure_harmonic(self, measure_channel: str) -> int:
+        variable = self.measure_harmonic_vars.get(measure_channel)
+        return parse_optional_positive_int(variable.get() if variable else "1", f"{measure_channel} harmonic", default=1)
+
+    def _apply_measure_mode_to_channel(self, measure_channel: str) -> str:
+        if not self.live_m81:
+            raise ValueError("Connect live instruments first")
+        requested_mode = self._selected_measure_mode(measure_channel)
+        requested_harmonic = self._selected_measure_harmonic(measure_channel)
+        if hasattr(self.live_m81, "set_preferred_measure_mode"):
+            self.live_m81.set_preferred_measure_mode(measure_channel, requested_mode)
+        if hasattr(self.live_m81, "set_preferred_measure_harmonic"):
+            self.live_m81.set_preferred_measure_harmonic(measure_channel, requested_harmonic)
+        resolved_mode = self.live_m81.resolve_measure_mode(measure_channel, requested_mode) if hasattr(self.live_m81, "resolve_measure_mode") else requested_mode
+        if resolved_mode == "dc":
+            self.live_m81.configure_dc_measure(measure_channel)
+        elif resolved_mode == "lockin":
+            self.live_m81.configure_lockin_measure(
+                measure_channel=measure_channel,
+                harmonic=requested_harmonic,
+                reference_source=self.manual_source_var.get(),
+            )
+        return resolved_mode
+
+    def _manual_apply_measure_modes(self) -> None:
+        if not self.live_m81:
+            self.status_var.set("Connect live instruments first")
+            return
+        try:
+            applied = [f"{channel}={self._apply_measure_mode_to_channel(channel)}" for channel in ["M1", "M2", "M3"]]
+            self.log_queue.put(f"Applied measure modes: {', '.join(applied)}\n")
+            self.status_var.set("Measure modes applied")
+            self._refresh_live_status()
+        except Exception:
+            self.log_queue.put(traceback.format_exc())
+            self.status_var.set("Measure mode setup failed")
+
     def _configure_manual_source_backend(self) -> tuple[str, str, float, float, int, str]:
         source, mode, setpoint, frequency_hz, harmonic, measure_channel = self._manual_source_parameters()
         if mode == "DC current":
@@ -1028,6 +1181,25 @@ class MeasurementGUI:
             )
         else:
             raise ValueError(f"Unsupported source mode: {mode}")
+        requested_measure_mode = self._selected_measure_mode(measure_channel)
+        requested_measure_harmonic = self._selected_measure_harmonic(measure_channel)
+        if requested_measure_mode == "auto":
+            requested_measure_mode = "dc" if mode.startswith("DC") else "lockin"
+            if hasattr(self.live_m81, "set_preferred_measure_mode"):
+                self.live_m81.set_preferred_measure_mode(measure_channel, "auto")
+        else:
+            if hasattr(self.live_m81, "set_preferred_measure_mode"):
+                self.live_m81.set_preferred_measure_mode(measure_channel, requested_measure_mode)
+        if hasattr(self.live_m81, "set_preferred_measure_harmonic"):
+            self.live_m81.set_preferred_measure_harmonic(measure_channel, requested_measure_harmonic)
+        if requested_measure_mode == "dc":
+            self.live_m81.configure_dc_measure(measure_channel)
+        else:
+            self.live_m81.configure_lockin_measure(
+                measure_channel=measure_channel,
+                harmonic=requested_measure_harmonic,
+                reference_source=source,
+            )
         return source, mode, setpoint, frequency_hz, harmonic, measure_channel
 
     def _manual_configure_source(self) -> None:
@@ -1120,17 +1292,15 @@ class MeasurementGUI:
             self.status_var.set("Connect live instruments first")
             return
         try:
-            reading = self.live_m81.read_lockin(channel)
+            reading = self._read_live_measurement(channel)
             self.log_queue.put(f"{channel} reading: {json.dumps(reading, default=str)}\n")
-            self.live_last_reading_var.set(f"Last reading: {channel} x={reading.get('x')} r={reading.get('r')}")
-        except Exception:
-            try:
-                reading = self.live_m81.read_dc(channel)
-                self.log_queue.put(f"{channel} DC reading: {json.dumps(reading, default=str)}\n")
+            if "x" in reading:
+                self.live_last_reading_var.set(f"Last reading: {channel} x={reading.get('x')} r={reading.get('r')}")
+            else:
                 self.live_last_reading_var.set(f"Last reading: {channel} value={reading.get('value')}")
-            except Exception:
-                self.log_queue.put(traceback.format_exc())
-                self.status_var.set("Read failed")
+        except Exception:
+            self.log_queue.put(traceback.format_exc())
+            self.status_var.set("Read failed")
 
     def _guided_safe_switch_then_enable(self) -> None:
         if not (self.live_m81 and self.live_matrix):
@@ -1174,6 +1344,12 @@ class MeasurementGUI:
             self.status_var.set("Guided shutdown failed")
 
     def _read_live_measurement(self, channel: str) -> dict[str, object]:
+        requested_mode = self._selected_measure_mode(channel)
+        resolved_mode = self.live_m81.resolve_measure_mode(channel, requested_mode) if hasattr(self.live_m81, "resolve_measure_mode") else requested_mode
+        if resolved_mode == "lockin":
+            return dict(self.live_m81.read_lockin(channel))
+        if resolved_mode == "dc":
+            return dict(self.live_m81.read_dc(channel))
         try:
             return dict(self.live_m81.read_lockin(channel))
         except Exception:

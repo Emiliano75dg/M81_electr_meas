@@ -42,6 +42,13 @@ class HallProtocol(MeasurementProtocol):
             measure_channels=measure_channels,
             harmonic=self.harmonic,
         )
+        for channel in measure_channels:
+            self._prepare_measure_channel(
+                channel,
+                source=self.source,
+                default_lockin=True,
+                default_harmonic=self.harmonic,
+            )
 
     def measure_point(self, temperature_k: float | None = None, field_t: float | None = None) -> MeasurementPoint:
         forward_channels = [self.measure_channel]
@@ -71,12 +78,12 @@ class HallProtocol(MeasurementProtocol):
             )
             raw_reverse_xy = raw_reverse[self.measure_channel]
             raw_reverse_xx = raw_reverse.get(self.longitudinal_measure_channel) if self.longitudinal_measure_channel else None
-        vxy_forward = raw_forward_xy["x"]
-        vxy_reverse = raw_reverse_xy["x"] if raw_reverse_xy else None
+        vxy_forward = raw_forward_xy.get("x", raw_forward_xy.get("value"))
+        vxy_reverse = raw_reverse_xy.get("x", raw_reverse_xy.get("value")) if raw_reverse_xy else None
         v_hall = vxy_forward if vxy_reverse is None else 0.5 * (vxy_forward - vxy_reverse)
         rxy = v_hall / self.current_rms_a if self.current_rms_a else None
-        vxx_forward = raw_forward_xx["x"] if raw_forward_xx else None
-        vxx_reverse = raw_reverse_xx["x"] if raw_reverse_xx else None
+        vxx_forward = raw_forward_xx.get("x", raw_forward_xx.get("value")) if raw_forward_xx else None
+        vxx_reverse = raw_reverse_xx.get("x", raw_reverse_xx.get("value")) if raw_reverse_xx else None
         vxx = vxx_forward if vxx_reverse is None else 0.5 * (vxx_forward - vxx_reverse)
         rxx = vxx / self.current_rms_a if (self.current_rms_a and vxx is not None) else None
         density = compute_hall_density(rxy / field_t) if (rxy is not None and field_t not in (None, 0.0)) else {"carrier_density_2d_m2": None, "carrier_density_2d_cm2": None}

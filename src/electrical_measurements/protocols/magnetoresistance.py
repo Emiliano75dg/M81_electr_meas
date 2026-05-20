@@ -43,6 +43,12 @@ class MagnetoresistanceProtocol(MeasurementProtocol):
             )
         else:
             self.m81.configure_dc_current(source=self.source, current_a=self.current_rms_a)
+        self._prepare_measure_channel(
+            self.measure_channel,
+            source=self.source,
+            default_lockin=self.lockin,
+            default_harmonic=self.harmonic,
+        )
 
     def measure_point(self, temperature_k: float | None = None, field_t: float | None = None) -> MeasurementPoint:
         channels, raw_forward = self._measure_with_source_enabled(

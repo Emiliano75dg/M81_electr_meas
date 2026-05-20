@@ -5,6 +5,7 @@ from .hallbar import HallBarProtocol
 from .magnetoresistance import MagnetoresistanceProtocol
 from .reciprocity import ReciprocityProtocol
 from .second_harmonic import SecondHarmonicProtocol
+from .vdp_hall import VanDerPauwHallProtocol
 from .vanderpauw import VanDerPauwProtocol
 
 __all__ = [
@@ -16,6 +17,6 @@ __all__ = [
     "MeasurementProtocol",
     "ReciprocityProtocol",
     "SecondHarmonicProtocol",
+    "VanDerPauwHallProtocol",
     "VanDerPauwProtocol",
 ]
-

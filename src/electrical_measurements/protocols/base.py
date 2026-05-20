@@ -113,6 +113,43 @@ class MeasurementProtocol:
         values = [float(sample["value"]) for sample in samples]
         return {"value": sum(values) / len(values), "timestamp": samples[-1]["timestamp"]}
 
+    def _resolve_channel_measure_mode(self, measure_channel: str, default_lockin: bool = True) -> str:
+        requested = "lockin" if default_lockin else "dc"
+        if hasattr(self.m81, "resolve_measure_mode"):
+            resolved = self.m81.resolve_measure_mode(measure_channel, "auto")
+            if resolved != "auto":
+                return resolved
+        return requested
+
+    def _resolve_channel_harmonic(self, measure_channel: str, default_harmonic: int = 1) -> int:
+        if hasattr(self.m81, "get_preferred_measure_harmonic"):
+            preferred = self.m81.get_preferred_measure_harmonic(measure_channel)
+            if preferred is not None:
+                return int(preferred)
+        if hasattr(self.m81, "resolve_measure_harmonic"):
+            return int(self.m81.resolve_measure_harmonic(measure_channel, None))
+        return int(default_harmonic)
+
+    def _prepare_measure_channel(
+        self,
+        measure_channel: str,
+        *,
+        source: str,
+        default_lockin: bool = True,
+        default_harmonic: int = 1,
+    ) -> tuple[str, int | None]:
+        mode = self._resolve_channel_measure_mode(measure_channel, default_lockin=default_lockin)
+        if mode == "dc":
+            self.m81.configure_dc_measure(measure_channel)
+            return mode, None
+        harmonic = self._resolve_channel_harmonic(measure_channel, default_harmonic=default_harmonic)
+        self.m81.configure_lockin_measure(
+            measure_channel=measure_channel,
+            harmonic=harmonic,
+            reference_source=source,
+        )
+        return "lockin", harmonic
+
     def _require_positive(self, value: float | None, name: str, allow_zero: bool = False) -> None:
         if value is None:
             raise ValueError(f"{name} is required")
@@ -155,7 +192,8 @@ class MeasurementProtocol:
         try:
             self.m81.enable_source(source)
             self._sleep()
-            reading = self._read_average_lockin(measure_channel) if lockin else self._read_average_dc(measure_channel)
+            resolved_mode = self._resolve_channel_measure_mode(measure_channel, default_lockin=lockin)
+            reading = self._read_average_lockin(measure_channel) if resolved_mode == "lockin" else self._read_average_dc(measure_channel)
             LOGGER.info(
                 "Completed measurement protocol=%s state=%s channel=%s",
                 self.__class__.__name__,
@@ -191,7 +229,11 @@ class MeasurementProtocol:
             self.m81.enable_source(source)
             self._sleep()
             readings = {
-                channel: (self._read_average_lockin(channel) if lockin else self._read_average_dc(channel))
+                channel: (
+                    self._read_average_lockin(channel)
+                    if self._resolve_channel_measure_mode(channel, default_lockin=lockin) == "lockin"
+                    else self._read_average_dc(channel)
+                )
                 for channel in measure_channels
             }
             LOGGER.info(

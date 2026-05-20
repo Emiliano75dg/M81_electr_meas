@@ -36,6 +36,14 @@ instruments:
     enabled: true
     connection:
       kind: mock
+    measure_modes:
+      M1: lockin
+      M2: dc
+      M3: auto
+    measure_harmonics:
+      M1: 1
+      M2: 2
+      M3: 3
   daq6510:
     enabled: true
     resource: MOCK::DAQ6510
@@ -46,6 +54,19 @@ instruments:
 output:
   directory: data
 ```
+
+`measure_modes` e facoltativo e permette di impostare il tipo di acquisizione preferito per ciascun canale di misura `M1/M2/M3`:
+
+- `lockin`: lettura `x/y/r/theta`
+- `dc`: lettura `value`
+- `auto`: usa la configurazione del canale se presente, altrimenti fallback automatico
+
+`measure_harmonics` e facoltativo e definisce, per ciascun canale in modalita `lockin`, quale armonica misurare:
+
+- `1`: fondamentale
+- `2`, `3`, ...: armoniche superiori
+
+La GUI Live permette di cambiare sia `mode` sia `harmonic` per `M1/M2/M3`, mentre i protocolli automatici usano le preferenze configurate nel file YAML quando presenti.
 
 Per un backend ambiente reale HTTP:
 
@@ -85,7 +106,13 @@ Esempio Hall bar: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emili
 ```bash
 python examples/run_vdp_hall.py --mock
 electrical-measure run --mock --config configs/instruments.yaml --protocol hall --contact-map configs/contact_maps/hallbar_6contacts_7709.yaml
+electrical-measure run --mock --config configs/instruments.yaml --protocol vdp_hall --contact-map configs/contact_maps/vdp_4contacts_7709.yaml --include-reciprocity
+electrical-measure run --mock --config configs/instruments.yaml --protocol vdp --contact-map configs/contact_maps/vdp_4contacts_7709.yaml --include-anisotropy
 ```
+
+`vdp_hall` usa gli stati Van der Pauw per una misura Hall in geometria VdP. Con `--include-reciprocity` la routine aggiunge anche gli stati reciproci alla stessa sequenza e salva i relativi errori di reciprocita nei dati derivati.
+
+Nel protocollo `vdp`, `--include-anisotropy` aggiunge un check di anisotropia tra le due famiglie ortogonali Van der Pauw e salva nei `derived` le medie delle due famiglie, la differenza assoluta/relativa e il rapporto tra esse.
 
 ## GUI
 

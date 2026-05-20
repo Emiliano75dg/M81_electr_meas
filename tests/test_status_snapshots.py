@@ -7,9 +7,11 @@ def test_mock_status_snapshots_include_live_fields():
     m81 = MockM81Controller()
     env = MockEnvironmentController(temperature_k=295.0, field_t=0.25)
     m81.enable_source("S1")
+    m81.set_preferred_measure_mode("M2", "dc")
     m81_snapshot = m81.status_snapshot()
     env_snapshot = env.status_snapshot()
     assert m81_snapshot["sources"]["S1"]["enabled"] is True
+    assert m81_snapshot["measures"]["M2"]["preferred_mode"] == "dc"
     assert env_snapshot["temperature_k"] == 295.0
     assert env_snapshot["field_t"] == 0.25
 

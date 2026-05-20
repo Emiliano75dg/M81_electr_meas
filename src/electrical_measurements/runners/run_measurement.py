@@ -32,6 +32,7 @@ from ..protocols.hall import HallProtocol
 from ..protocols.magnetoresistance import MagnetoresistanceProtocol
 from ..protocols.reciprocity import ReciprocityProtocol
 from ..protocols.second_harmonic import SecondHarmonicProtocol
+from ..protocols.vdp_hall import VanDerPauwHallProtocol
 from ..protocols.vanderpauw import VanDerPauwProtocol
 from ..switching.contact_map import ContactMap
 from ..switching.matrix7709 import Matrix7709, SafeMeasurementSession
@@ -115,11 +116,27 @@ def build_protocol(args: argparse.Namespace, config: dict[str, Any], contact_map
     if args.protocol == "hallbar_mr":
         return MagnetoresistanceProtocol(state=selected_state_name or "hallbar_forward", current_rms_a=args.current, frequency_hz=args.frequency, harmonic=args.harmonic, **common)
     if args.protocol == "vdp":
-        return VanDerPauwProtocol(states=selected_states or None, current_rms_a=args.current, frequency_hz=args.frequency, **common)
+        return VanDerPauwProtocol(
+            states=selected_states or None,
+            current_rms_a=args.current,
+            frequency_hz=args.frequency,
+            harmonic=args.harmonic,
+            include_anisotropy=bool(getattr(args, "include_anisotropy", False)),
+            **common,
+        )
+    if args.protocol == "vdp_hall":
+        return VanDerPauwHallProtocol(
+            states=selected_states or None,
+            current_rms_a=args.current,
+            frequency_hz=args.frequency,
+            harmonic=args.harmonic,
+            include_reciprocity=bool(getattr(args, "include_reciprocity", False)),
+            **common,
+        )
     if args.protocol == "second_harmonic":
         return SecondHarmonicProtocol(state=selected_state_name or "second_harmonic_vxy", current_rms_a=args.current, frequency_hz=args.frequency, harmonic=args.harmonic, **common)
     if args.protocol == "reciprocity":
-        return ReciprocityProtocol(states=selected_states or list(contact_map.states.keys())[:2], current_rms_a=args.current, frequency_hz=args.frequency, **common)
+        return ReciprocityProtocol(states=selected_states or list(contact_map.states.keys())[:2], current_rms_a=args.current, frequency_hz=args.frequency, harmonic=args.harmonic, **common)
     if args.protocol == "check_contacts":
         return ContactCheckProtocol(states=selected_states or list(contact_map.states.keys()), **common)
     raise ValueError(f"Unsupported protocol: {args.protocol}")
@@ -141,10 +158,10 @@ def validate_run_inputs(args: argparse.Namespace, contact_map: ContactMap) -> No
     if getattr(args, "mode", "stable") == "stream-ramp":
         if getattr(args, "ramp_rate", None) is None or float(args.ramp_rate) <= 0:
             raise ValueError("--ramp-rate must be > 0 in stream-ramp mode")
-    if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "reciprocity"}:
+    if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "vdp_hall", "reciprocity"}:
         if getattr(args, "current", 0.0) <= 0:
             raise ValueError("--current must be > 0 for the selected protocol")
-    if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "reciprocity"}:
+    if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "vdp_hall", "reciprocity"}:
         if getattr(args, "frequency", 0.0) <= 0:
             raise ValueError("--frequency must be > 0 for the selected protocol")
     if getattr(args, "harmonic", 1) < 1:
@@ -182,6 +199,8 @@ def build_run_namespace(
     state_name: str | None = None,
     selected_states: str | None = None,
     environment_mode: str | None = None,
+    include_reciprocity: bool = False,
+    include_anisotropy: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         command="run",
@@ -207,6 +226,8 @@ def build_run_namespace(
         state_name=state_name,
         selected_states=selected_states,
         environment_mode=environment_mode,
+        include_reciprocity=include_reciprocity,
+        include_anisotropy=include_anisotropy,
     )
 
 
@@ -510,7 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", parents=[common])
     run_parser.add_argument("--sample-id")
     run_parser.add_argument("--output")
-    run_parser.add_argument("--protocol", required=True, choices=["hall", "hallbar_mr", "vdp", "second_harmonic", "reciprocity", "check_contacts"])
+    run_parser.add_argument("--protocol", required=True, choices=["hall", "hallbar_mr", "vdp", "vdp_hall", "second_harmonic", "reciprocity", "check_contacts"])
     run_parser.add_argument("--temperatures")
     run_parser.add_argument("--fields")
     run_parser.add_argument("--current", type=float, default=10e-6)
@@ -526,6 +547,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--state-name")
     run_parser.add_argument("--selected-states")
     run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument("--include-reciprocity", action="store_true")
+    run_parser.add_argument("--include-anisotropy", action="store_true")
     run_parser.set_defaults(func=run_command)
 
     list_parser = subparsers.add_parser("list-instruments", parents=[common])
@@ -558,7 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze_parser = subparsers.add_parser("analyze")
     analyze_parser.add_argument("--input", required=True)
-    analyze_parser.add_argument("--protocol", required=True, choices=["hall", "hallbar_mr", "vdp", "second_harmonic", "reciprocity", "check_contacts"])
+    analyze_parser.add_argument("--protocol", required=True, choices=["hall", "hallbar_mr", "vdp", "vdp_hall", "second_harmonic", "reciprocity", "check_contacts"])
     analyze_parser.set_defaults(func=analyze_command)
 
     gui_parser = subparsers.add_parser("gui", parents=[common])

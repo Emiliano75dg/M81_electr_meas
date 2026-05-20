@@ -15,6 +15,7 @@ class ReciprocityProtocol(MeasurementProtocol):
         states: list[str],
         current_rms_a: float = 10e-6,
         frequency_hz: float = 13.7,
+        harmonic: int = 1,
         measure_channel: str = "M1",
         source: str = "S1",
         **kwargs: Any,
@@ -23,6 +24,7 @@ class ReciprocityProtocol(MeasurementProtocol):
         self.states = states
         self.current_rms_a = current_rms_a
         self.frequency_hz = frequency_hz
+        self.harmonic = harmonic
         self.measure_channel = measure_channel
         self.source = source
 
@@ -36,7 +38,13 @@ class ReciprocityProtocol(MeasurementProtocol):
             current_rms_a=self.current_rms_a,
             frequency_hz=self.frequency_hz,
             measure_channels=[self.measure_channel],
-            harmonic=1,
+            harmonic=self.harmonic,
+        )
+        self._prepare_measure_channel(
+            self.measure_channel,
+            source=self.source,
+            default_lockin=True,
+            default_harmonic=self.harmonic,
         )
 
     def measure_point(self, temperature_k: float | None = None, field_t: float | None = None) -> MeasurementPoint:
@@ -54,7 +62,8 @@ class ReciprocityProtocol(MeasurementProtocol):
                     current_sign=1.0,
                     lockin=True,
                 )
-                resistance = raw["x"] / self.current_rms_a
+                raw_value = raw.get("x", raw.get("value"))
+                resistance = raw_value / self.current_rms_a
                 rows.append(
                     {
                         "state": current_state,
@@ -92,7 +101,7 @@ class ReciprocityProtocol(MeasurementProtocol):
             source_current_a_rms=self.current_rms_a,
             source_current_a_peak=self.current_rms_a * 2**0.5,
             frequency_hz=self.frequency_hz,
-            harmonic=1,
+            harmonic=self.harmonic,
             raw={"rows": rows},
             derived=derived,
             metadata={"measure_channel": self.measure_channel, "source_channel": self.source},
