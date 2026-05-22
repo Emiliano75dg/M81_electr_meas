@@ -34,3 +34,9 @@ def test_parser_supports_vdp_anisotropy_flag():
     args = parser.parse_args(["run", "--protocol", "vdp", "--include-anisotropy"])
     assert args.protocol == "vdp"
     assert args.include_anisotropy is True
+
+
+def test_parser_supports_stream_observe_mode():
+    parser = build_parser()
+    args = parser.parse_args(["run", "--protocol", "hall", "--mode", "stream-observe"])
+    assert args.mode == "stream-observe"

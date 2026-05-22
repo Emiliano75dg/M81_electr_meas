@@ -82,6 +82,31 @@ def test_run_command_stream_ramp_rejects_async_poll_environment(tmp_path: Path):
         run_command(args)
 
 
+def test_run_command_stream_observe_accepts_async_poll_environment(tmp_path: Path):
+    config_path = write_config(tmp_path, environment_mode="async-poll", environment_kind="mock")
+    args = build_run_namespace(
+        config=str(config_path),
+        contact_map="configs/contact_maps/hallbar_6contacts_7709.yaml",
+        mock=True,
+        output=str(tmp_path),
+        protocol="hallbar_mr",
+        temperatures="300",
+        fields="0",
+        current=10e-6,
+        frequency=13.7,
+        settle=0.0,
+        mode="stream-observe",
+        stream_samples=4,
+        stream_interval=0.01,
+    )
+
+    result = run_command(args)
+
+    assert result == 0
+    dataframe = pd.read_csv(tmp_path / "hallbar_mr_stream.csv")
+    assert dataframe["stream_mode"].eq("observe").all()
+
+
 def test_emergency_stop_command_succeeds_with_mock_backends(tmp_path: Path):
     config_path = write_config(tmp_path, environment_mode="standalone")
     args = build_run_namespace(

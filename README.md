@@ -114,7 +114,7 @@ For a real HTTP environment backend:
 instruments:
   environment:
     kind: teslatron
-    mode: integrated
+    allow_control: false
     endpoint: http://127.0.0.1:8000
     state_path: /state
     set_temperature_path: /temperature/set
@@ -126,6 +126,11 @@ instruments:
     poll_interval_s: 0.5
     timeout_s: 5.0
 ```
+
+`allow_control: false` is the recommended laboratory mode. For `kind: teslatron`, this makes the effective default environment mode `async-poll`, so the software only performs `GET /state` readback and never sends setpoint or ramp commands. To let this project drive Teslatron explicitly, set both:
+
+- `allow_control: true`
+- `mode: integrated`
 
 Supported environment modes:
 
@@ -171,7 +176,7 @@ electrical-measure gui --mock
 From the GUI you can:
 
 - choose instrument configuration files and a contact map
-- select the protocol and either `stable` or `stream-ramp` mode
+- select the protocol and either `stable`, `stream-observe`, or `stream-ramp` mode
 - choose the environment mode `integrated`, `async-poll`, or `standalone`
 - select measurement states dynamically from the contact map
 - inspect relay details, reciprocal states, and instrument-to-contact bindings
@@ -181,7 +186,7 @@ From the GUI you can:
 - inspect logs, execution state, and previews of generated CSV files in dedicated tabs
 - connect live instruments from the GUI and monitor `T`, `B`, active sources, and closed relays
 - view the effective environment mode badge in the `Live` tab and whether the backend is read-only/local
-- use the `Environment Controls` panel in the `Live` tab for `Set T/B` and `Start/Stop Ramp` only when the mode is `integrated`
+- use the `Environment Controls` panel in the `Live` tab for `Set T/B` and `Start/Stop Ramp` only when the mode is `integrated` and control is explicitly enabled
 - configure `S1`/`S2`/`S3` manually in current or voltage mode, in DC or AC lock-in, with setpoint, frequency, and harmonic
 - use guided mini-sequences such as `Safe Switch Then Enable`, `Safe Switch Then Read`, and `Disable + Open All`
 - apply a matrix state manually, open all relays, and quickly read `M1` or `M2`
@@ -191,11 +196,28 @@ From the GUI you can:
 
 ## Streaming During Ramps
 
-To acquire synchronized data during a field or temperature ramp:
+Recommended read-only mode for externally controlled Teslatron or LabVIEW ramps:
+
+```bash
+electrical-measure run \
+  --config configs/instruments.yaml \
+  --protocol hallbar_mr \
+  --contact-map configs/contact_maps/hallbar_6contacts_7709.yaml \
+  --mode stream-observe \
+  --fields 0 \
+  --temperatures 300 \
+  --stream-samples 100 \
+  --stream-interval 0.1
+```
+
+`stream-observe` continuously acquires M81 data and polls environment state, but it never starts or stops a field or temperature ramp.
+
+To acquire synchronized data during a software-controlled field or temperature ramp:
 
 ```bash
 electrical-measure run \
   --mock \
+  --environment-mode integrated \
   --config configs/instruments.yaml \
   --protocol hallbar_mr \
   --contact-map configs/contact_maps/hallbar_6contacts_7709.yaml \
@@ -209,7 +231,24 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
+`stream-ramp` is preserved for explicit control mode only. When using a Teslatron backend, enable it with `allow_control: true`.
+
 The resulting dataset stores `trace_index`, `trace_channel`, `field_t`, `temperature_k`, and `environment_timestamp` to synchronize the M81 trace with the environment backend.
+
+## Notifications
+
+Optional completion/failure notifications can be sent through a webhook:
+
+```yaml
+notifications:
+  kind: http-webhook
+  endpoint: http://127.0.0.1:9000/measurements
+  timeout_s: 5.0
+  headers:
+    Authorization: Bearer secret-token
+```
+
+On success the runner sends `measurement_completed` with protocol, `sample_id`, `output_dir`, row count, timestamps, last temperature, and last field. On failure it sends `measurement_failed`.
 
 When the official Lake Shore driver exposes `SSMSystem.get_data()`, the wrapper uses it as the first choice for streaming data. The SCPI fallback remains isolated in [m81_scpi_fallback.py](/home/emiliano/Documents/Automazione/M81_electr_meas/src/electrical_measurements/instruments/m81_scpi_fallback.py).
 

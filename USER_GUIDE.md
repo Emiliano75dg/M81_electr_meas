@@ -73,11 +73,19 @@ The software supports three environment modes:
 - `async-poll`: reads temperature/field but does not control them
 - `standalone`: keeps temperature/field as local software context only
 
+For `kind: teslatron`, the recommended laboratory configuration is read-only:
+
+- set `allow_control: false`
+- omit `mode` or set `mode: async-poll`
+
+In that configuration the software only polls Teslatron state and never sends setpoint or ramp commands.
+
 ### 2.5 Run Mode
 
-Two run modes exist:
+Three run modes exist:
 
 - `stable`: move to a target temperature/field and then take measurements
+- `stream-observe`: continuously acquire M81 data and poll environment state without starting or stopping ramps
 - `stream-ramp`: stream data while a field or temperature ramp is in progress
 
 ---
@@ -223,7 +231,7 @@ HTTP backend example:
 instruments:
   environment:
     kind: teslatron
-    mode: integrated
+    allow_control: false
     endpoint: http://127.0.0.1:8000
     state_path: /state
     set_temperature_path: /temperature/set
@@ -235,6 +243,22 @@ instruments:
     poll_interval_s: 0.5
     timeout_s: 5.0
 ```
+
+Important behavior:
+
+- if `kind: teslatron` and `allow_control` is not explicitly `true`, the effective default mode is `async-poll`
+- use `allow_control: true` together with `mode: integrated` only when this software is intentionally allowed to drive Teslatron
+
+Optional notification example:
+
+```yaml
+notifications:
+  kind: http-webhook
+  endpoint: http://127.0.0.1:9000/measurements
+  timeout_s: 5.0
+```
+
+On success the runner sends `measurement_completed`. On failure it sends `measurement_failed`.
 
 ---
 
@@ -466,13 +490,39 @@ electrical-measure run \
 
 Streaming mode is for acquiring continuously while the environment is moving.
 
+Recommended external-control workflow:
+
+- `--mode stream-observe`
+- environment mode `async-poll`
+- Teslatron ramps controlled outside this software, for example by Teslatron UI or LabVIEW
+
+Requirements for `stream-observe`:
+
+- protocol must be single-state for current streaming implementation
+- the software will only read the environment and never start or stop ramps
+
 Requirements:
 
 - `--mode stream-ramp`
 - `--ramp-target`
 - `--ramp-rate`
 - environment mode must support control, typically `integrated`
+- Teslatron control must be explicitly enabled with `allow_control: true`
 - protocol must be single-state for current streaming implementation
+
+Example `stream-observe` run:
+
+```bash
+electrical-measure run \
+  --config configs/instruments.yaml \
+  --contact-map configs/contact_maps/hallbar_6contacts_7709.yaml \
+  --protocol hallbar_mr \
+  --mode stream-observe \
+  --temperatures 300 \
+  --fields 0 \
+  --stream-samples 100 \
+  --stream-interval 0.1
+```
 
 Example:
 
@@ -495,6 +545,7 @@ electrical-measure run \
 Notes:
 
 - in `async-poll`, stream-ramp is intentionally rejected because the backend is read-only
+- in `async-poll`, use `stream-observe` for externally controlled ramps
 - the resulting stream file includes synchronized environment values
 
 ---
@@ -527,6 +578,7 @@ Multi-state / protocol-specific options:
 
 Streaming options:
 
+- `--mode stream-observe`
 - `--mode stream-ramp`
 - `--ramp-quantity`
 - `--ramp-target`
@@ -543,12 +595,14 @@ Streaming options:
 - the software should send setpoints
 - the software should start or stop ramps
 - you want stream-ramp mode
+- `allow_control: true` is explicitly approved for Teslatron
 
 ### Use `async-poll` when:
 
 - the environment is controlled externally
 - you still want live readback in GUI or CLI runs
 - you do not want the software to modify `T` or `B`
+- you want the recommended read-only Teslatron laboratory mode
 
 ### Use `standalone` when:
 
@@ -791,7 +845,8 @@ Cause:
 Fix:
 
 - switch to `integrated` if the software should control ramps
-- or run in `stable` mode instead
+- set `allow_control: true` if the Teslatron backend is intentionally writable
+- or use `stream-observe` / `stable` instead
 
 ### 18.4 Contact map load failure
 
@@ -888,6 +943,21 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
+### Read-only Teslatron stream-observe
+
+```bash
+electrical-measure run \
+  --environment-mode async-poll \
+  --config configs/instruments.yaml \
+  --contact-map configs/contact_maps/hallbar_6contacts_7709.yaml \
+  --protocol hallbar_mr \
+  --mode stream-observe \
+  --temperatures 300 \
+  --fields 0 \
+  --stream-samples 50 \
+  --stream-interval 0.1
+```
+
 ---
 
 ## 20. Suggested Daily Workflow
@@ -899,8 +969,9 @@ For routine use, this is a good default pattern:
 3. do a `check-contacts`
 4. run a short stable protocol
 5. inspect CSV and metadata
-6. move to a full sweep or stream-ramp
-7. archive config, contact map, and output together
+6. for externally driven Teslatron ramps, prefer `stream-observe`
+7. use `stream-ramp` only when control is explicitly enabled
+8. archive config, contact map, and output together
 
 ---
 
@@ -928,7 +999,8 @@ The quickest path to success with this software is:
 
 - start in mock mode
 - understand contact maps before touching hardware
-- use stable mode before stream-ramp
+- use stable mode before streaming
+- prefer read-only Teslatron operation unless software control is intentionally required
 - verify outputs after every config change
 - keep the GUI Preview and Log tabs open while learning
 

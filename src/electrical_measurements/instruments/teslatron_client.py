@@ -97,7 +97,7 @@ class ReadOnlyEnvironmentController:
     mode: str = "async-poll"
 
     def _raise_control_disabled(self) -> None:
-        raise EnvironmentControlError("Environment control is disabled in async-poll mode")
+        raise EnvironmentControlError(f"Environment control is disabled in {self.mode} mode")
 
     def read_temperature(self) -> float | None:
         return self.backend.read_temperature()
@@ -149,7 +149,19 @@ class ReadOnlyEnvironmentController:
 
 def environment_mode_from_config(config: dict[str, Any]) -> str:
     env_cfg = config.get("instruments", {}).get("environment", {})
-    return str(env_cfg.get("mode", "integrated")).strip().lower() or "integrated"
+    configured = str(env_cfg.get("mode", "")).strip().lower()
+    if configured:
+        return configured
+    if str(env_cfg.get("kind", "")).strip().lower() == "teslatron" and not environment_allow_control_from_config(config):
+        return "async-poll"
+    return "integrated"
+
+
+def environment_allow_control_from_config(config: dict[str, Any]) -> bool:
+    env_cfg = config.get("instruments", {}).get("environment", {})
+    if "allow_control" in env_cfg:
+        return bool(env_cfg.get("allow_control"))
+    return str(env_cfg.get("kind", "")).strip().lower() != "teslatron"
 
 
 def environment_supports_control(environment: Any) -> bool:

@@ -27,7 +27,7 @@ from ..protocols.vdp_hall import default_vdp_hall_states
 from ..switching.contact_map import ContactMap
 
 PROTOCOLS = ["hall", "hallbar_mr", "vdp", "vdp_hall", "second_harmonic", "reciprocity", "check_contacts"]
-MODES = ["stable", "stream-ramp"]
+MODES = ["stable", "stream-observe", "stream-ramp"]
 RAMP_QUANTITIES = ["field", "temperature"]
 ENVIRONMENT_MODES = ["integrated", "async-poll", "standalone"]
 PLOT_PREFERRED_COLUMNS = ["field_t", "temperature_k", "rxx_ohm", "rxy_ohm", "lockin_x", "lockin_r", "dc_value"]
@@ -277,7 +277,7 @@ class MeasurementGUI:
         self.dry_run_var = tk.BooleanVar(value=False)
         self.include_reciprocity_var = tk.BooleanVar(value=False)
         self.include_anisotropy_var = tk.BooleanVar(value=False)
-        self.environment_mode_var = tk.StringVar(value="integrated")
+        self.environment_mode_var = tk.StringVar(value="async-poll")
         self.temperatures_var = tk.StringVar(value="300")
         self.fields_var = tk.StringVar(value="0")
         self.current_var = tk.StringVar(value="1e-5")
@@ -808,9 +808,14 @@ class MeasurementGUI:
             self._set_widget_state("ramp_rate", True)
 
         if env_mode == "integrated":
-            message = "Ready for streaming ramp" if mode == "stream-ramp" else "Ready"
+            if mode == "stream-ramp":
+                message = "Ready for software-controlled streaming ramp"
+            elif mode == "stream-observe":
+                message = "Ready to observe an externally controlled ramp"
+            else:
+                message = "Ready"
         elif env_mode == "async-poll":
-            message = "Async poll: T/B are observed only; setpoints and ramps are disabled"
+            message = "Async poll: read-only Teslatron mode; use stream-observe for external ramps"
         else:
             message = "Standalone: local T/B context only; external environment control is disabled"
         self.status_var.set(message)
@@ -1045,7 +1050,7 @@ class MeasurementGUI:
         self._draw_live_plot()
 
     def _poll_live_status(self) -> None:
-        if self.live_environment and hasattr(self.live_environment, "advance_time") and self.mode_var.get() == "stream-ramp":
+        if self.live_environment and hasattr(self.live_environment, "advance_time") and self.mode_var.get() in {"stream-ramp", "stream-observe"}:
             try:
                 self.live_environment.advance_time(1.0)
             except Exception:
