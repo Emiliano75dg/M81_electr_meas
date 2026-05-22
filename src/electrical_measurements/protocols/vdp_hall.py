@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..analysis.reciprocity import reciprocity_error
+from ..sequences.schema import MeasurementSequence, SequenceDefaults, SequenceStep
 from .base import MeasurementPoint, MeasurementProtocol
 
 
@@ -21,6 +22,58 @@ def default_vdp_hall_states(contact_map: Any) -> list[str]:
 
 
 class VanDerPauwHallProtocol(MeasurementProtocol):
+    @classmethod
+    def default_sequence(
+        cls,
+        *,
+        contact_map: Any,
+        states: list[str] | None = None,
+        current_rms_a: float = 10e-6,
+        frequency_hz: float = 13.7,
+        harmonic: int = 1,
+        measure_channel: str = "M1",
+        source: str = "S1",
+        include_reciprocity: bool = False,
+    ) -> MeasurementSequence:
+        selected_states = states or default_vdp_hall_states(contact_map)
+        steps: list[SequenceStep] = []
+        for state in selected_states:
+            steps.append(
+                SequenceStep(
+                    name=f"measure_{state.lower()}",
+                    state=state,
+                    outputs={measure_channel: {"name": f"{state.lower()}_ohm", "transform": "lockin_x_over_current"}},
+                )
+            )
+            reciprocal_state = contact_map.get_state_name(state, "reciprocal") if include_reciprocity else None
+            if reciprocal_state:
+                steps.append(
+                    SequenceStep(
+                        name=f"measure_{reciprocal_state.lower()}",
+                        state=reciprocal_state,
+                        reciprocal_step_of=f"measure_{state.lower()}",
+                        outputs={measure_channel: {"name": f"{reciprocal_state.lower()}_ohm", "transform": "lockin_x_over_current"}},
+                    )
+                )
+        return MeasurementSequence(
+            name="vdp_hall_default",
+            description="Legacy Van der Pauw Hall preset expressed as a measurement sequence.",
+            contact_map=str(getattr(contact_map, "path", "") or ""),
+            defaults=SequenceDefaults(
+                excitation_mode="ac",
+                source=source,
+                measure_channel=measure_channel,
+                current_rms_a=current_rms_a,
+                frequency_hz=frequency_hz,
+                harmonic=harmonic,
+                settle_s=0.1,
+                repeats=1,
+                lockin=True,
+                metadata={"legacy_protocol": cls.__name__, "include_reciprocity": include_reciprocity},
+            ),
+            steps=steps,
+        )
+
     def __init__(
         self,
         *,

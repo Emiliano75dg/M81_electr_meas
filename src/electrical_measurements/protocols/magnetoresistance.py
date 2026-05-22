@@ -2,10 +2,60 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..sequences.schema import MeasurementSequence, SequenceDefaults, SequenceStep
 from .base import MeasurementPoint, MeasurementProtocol
 
 
 class MagnetoresistanceProtocol(MeasurementProtocol):
+    @classmethod
+    def default_sequence(
+        cls,
+        *,
+        contact_map: Any,
+        state: str,
+        current_rms_a: float,
+        frequency_hz: float,
+        harmonic: int = 1,
+        measure_channel: str = "M1",
+        source: str = "S1",
+        reverse_current: bool = False,
+    ) -> MeasurementSequence:
+        steps = [
+            SequenceStep(
+                name="mr_forward",
+                state=state,
+                outputs={measure_channel: {"name": "rxx_ohm", "transform": "lockin_x_over_current"}},
+            )
+        ]
+        reverse_state = contact_map.get_state_name(state, "reverse_current") if reverse_current else None
+        if reverse_state:
+            steps.append(
+                SequenceStep(
+                    name="mr_reverse",
+                    state=reverse_state,
+                    reciprocal_step_of="mr_forward",
+                    outputs={measure_channel: {"name": "rxx_reverse_ohm", "transform": "lockin_x_over_current"}},
+                )
+            )
+        return MeasurementSequence(
+            name="magnetoresistance_default",
+            description="Legacy magnetoresistance preset expressed as a measurement sequence.",
+            contact_map=str(getattr(contact_map, "path", "") or ""),
+            defaults=SequenceDefaults(
+                excitation_mode="ac",
+                source=source,
+                measure_channel=measure_channel,
+                current_rms_a=current_rms_a,
+                frequency_hz=frequency_hz,
+                harmonic=harmonic,
+                settle_s=0.1,
+                repeats=1,
+                lockin=True,
+                metadata={"legacy_protocol": cls.__name__, "reverse_current": reverse_current},
+            ),
+            steps=steps,
+        )
+
     def __init__(
         self,
         *,

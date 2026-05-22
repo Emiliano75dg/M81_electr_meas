@@ -39,6 +39,7 @@ STEP_FIELDS = {
     "repeats",
     "measure_kind",
     "tags",
+    "reciprocal_step_of",
     "reciprocal_of",
     "outputs",
     "metadata",
@@ -65,11 +66,11 @@ def _as_optional_str_list(value: Any, context: str) -> list[str] | None:
     return list(value)
 
 
-def _as_optional_str_mapping(value: Any, context: str) -> dict[str, str] | None:
+def _as_optional_outputs(value: Any, context: str) -> dict[str, Any] | None:
     if value is None:
         return None
-    if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
-        raise SequenceValidationError(f"{context} must be a mapping of strings")
+    if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
+        raise SequenceValidationError(f"{context} must be a mapping keyed by strings")
     return dict(value)
 
 
@@ -119,8 +120,9 @@ def _load_step(index: int, data: Any) -> SequenceStep:
         repeats=payload.get("repeats"),
         measure_kind=payload.get("measure_kind"),
         tags=_as_optional_str_list(payload.get("tags"), f"steps[{index}].tags"),
+        reciprocal_step_of=payload.get("reciprocal_step_of"),
         reciprocal_of=payload.get("reciprocal_of"),
-        outputs=_as_optional_str_mapping(payload.get("outputs"), f"steps[{index}].outputs"),
+        outputs=_as_optional_outputs(payload.get("outputs"), f"steps[{index}].outputs"),
         metadata=_as_optional_metadata(payload.get("metadata"), f"steps[{index}].metadata"),
     )
 
@@ -199,6 +201,7 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
             "repeats": step.repeats,
             "measure_kind": step.measure_kind,
             "tags": step.tags,
+            "reciprocal_step_of": step.reciprocal_step_of,
             "reciprocal_of": step.reciprocal_of,
             "outputs": step.outputs,
             "metadata": step.metadata,

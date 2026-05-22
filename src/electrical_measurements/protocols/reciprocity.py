@@ -5,10 +5,65 @@ from typing import Any
 import pandas as pd
 
 from ..analysis.reciprocity import match_reciprocal_field, reciprocity_error
+from ..sequences.schema import MeasurementSequence, SequenceDefaults, SequenceStep
 from .base import MeasurementPoint, MeasurementProtocol
 
 
 class ReciprocityProtocol(MeasurementProtocol):
+    @classmethod
+    def default_sequence(
+        cls,
+        *,
+        contact_map: Any,
+        states: list[str],
+        current_rms_a: float = 10e-6,
+        frequency_hz: float = 13.7,
+        harmonic: int = 1,
+        measure_channel: str = "M1",
+        source: str = "S1",
+    ) -> MeasurementSequence:
+        steps: list[SequenceStep] = []
+        seen: set[str] = set()
+        for state in states:
+            if state not in seen:
+                steps.append(
+                    SequenceStep(
+                        name=f"measure_{state.lower()}",
+                        state=state,
+                        outputs={measure_channel: {"name": f"{state.lower()}_ohm", "transform": "lockin_x_over_current"}},
+                    )
+                )
+                seen.add(state)
+            reciprocal_state = contact_map.get_state_name(state, "reciprocal")
+            if reciprocal_state and reciprocal_state not in seen:
+                steps.append(
+                    SequenceStep(
+                        name=f"measure_{reciprocal_state.lower()}",
+                        state=reciprocal_state,
+                        reciprocal_step_of=f"measure_{state.lower()}",
+                        outputs={measure_channel: {"name": f"{reciprocal_state.lower()}_ohm", "transform": "lockin_x_over_current"}},
+                    )
+                )
+                seen.add(reciprocal_state)
+        return MeasurementSequence(
+            name="reciprocity_default",
+            description="Legacy reciprocity preset expressed as a measurement sequence.",
+            contact_map=str(getattr(contact_map, "path", "") or ""),
+            defaults=SequenceDefaults(
+                excitation_mode="ac",
+                source=source,
+                measure_channel=measure_channel,
+                current_rms_a=current_rms_a,
+                frequency_hz=frequency_hz,
+                harmonic=harmonic,
+                settle_s=0.1,
+                repeats=1,
+                lockin=True,
+                metadata={"legacy_protocol": cls.__name__},
+            ),
+            steps=steps,
+        )
+
     def __init__(
         self,
         *,

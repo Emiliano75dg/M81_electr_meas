@@ -91,10 +91,23 @@ def parse_csv_mapping(value: str) -> dict[str, str]:
     return mapping
 
 
-def format_outputs_mapping(value: dict[str, str] | None) -> str:
+def format_outputs_mapping(value: dict[str, object] | None) -> str:
     if not value:
         return ""
-    return ",".join(f"{key}:{mapped}" for key, mapped in value.items())
+    parts: list[str] = []
+    for key, mapped in value.items():
+        if isinstance(mapped, dict):
+            name = mapped.get("name")
+            transform = mapped.get("transform")
+            if name and transform:
+                parts.append(f"{key}:{name}/{transform}")
+            elif name:
+                parts.append(f"{key}:{name}")
+            else:
+                parts.append(f"{key}:{mapped}")
+        else:
+            parts.append(f"{key}:{mapped}")
+    return ",".join(parts)
 
 
 def stringify_step_tags(step: dict[str, object]) -> str:
@@ -142,7 +155,7 @@ def sequence_step_table_row(step: dict[str, object], defaults: dict[str, object]
         "settle_s": str(step.get("settle_s") if step.get("settle_s") is not None else defaults.get("settle_s") or ""),
         "repeats": str(step.get("repeats") if step.get("repeats") is not None else defaults.get("repeats") or ""),
         "tags": stringify_step_tags(step),
-        "reciprocal_of": str(step.get("reciprocal_of", "")),
+        "reciprocal_step_of": str(step.get("reciprocal_step_of") or step.get("reciprocal_of") or ""),
         "relay_channels": relay_channels_for_state(contact_map, str(step.get("state", ""))),
     }
 
@@ -637,7 +650,7 @@ class MeasurementGUI:
             "settle_s",
             "repeats",
             "tags",
-            "reciprocal_of",
+            "reciprocal_step_of",
             "relay_channels",
         )
         self.sequence_tree = ttk.Treeview(center, columns=sequence_columns, show="headings", height=16)
@@ -655,7 +668,7 @@ class MeasurementGUI:
             ("settle_s", "Settle", 70),
             ("repeats", "Repeats", 70),
             ("tags", "Tags", 120),
-            ("reciprocal_of", "Reciprocal", 100),
+            ("reciprocal_step_of", "Reciprocal", 100),
             ("relay_channels", "Relays", 120),
         ]:
             self.sequence_tree.heading(column, text=heading)
@@ -1161,7 +1174,7 @@ class MeasurementGUI:
             "repeats": None,
             "measure_kind": "",
             "tags": [],
-            "reciprocal_of": "",
+            "reciprocal_step_of": "",
             "outputs": {},
             "metadata": {},
         }
@@ -1222,7 +1235,7 @@ class MeasurementGUI:
         self.sequence_step_repeats_var.set("" if step.get("repeats") is None else str(step.get("repeats")))
         self.sequence_step_measure_kind_var.set(str(step.get("measure_kind", "")))
         self.sequence_step_tags_var.set(",".join(step.get("tags", []) or []))
-        self.sequence_step_reciprocal_var.set(str(step.get("reciprocal_of", "")))
+        self.sequence_step_reciprocal_var.set(str(step.get("reciprocal_step_of") or step.get("reciprocal_of") or ""))
         self.sequence_step_outputs_var.set(format_outputs_mapping(step.get("outputs") if isinstance(step.get("outputs"), dict) else None))
         self._update_sequence_relay_preview()
         self._update_sequence_step_mode_fields()
@@ -1266,7 +1279,8 @@ class MeasurementGUI:
             step["repeats"] = int(self.sequence_step_repeats_var.get()) if self.sequence_step_repeats_var.get().strip() else None
             step["measure_kind"] = self.sequence_step_measure_kind_var.get().strip() or None
             step["tags"] = parse_csv_list(self.sequence_step_tags_var.get())
-            step["reciprocal_of"] = self.sequence_step_reciprocal_var.get().strip() or None
+            step["reciprocal_step_of"] = self.sequence_step_reciprocal_var.get().strip() or None
+            step["reciprocal_of"] = None
             step["outputs"] = parse_csv_mapping(self.sequence_step_outputs_var.get()) if self.sequence_step_outputs_var.get().strip() else {}
             self._refresh_sequence_table()
             self._update_sequence_relay_preview()

@@ -1,6 +1,7 @@
 import pytest
 import yaml
 
+from electrical_measurements.capabilities import InstrumentCapabilities
 from electrical_measurements.exceptions import SequenceValidationError
 from electrical_measurements.sequences import load_measurement_sequence, validate_measurement_sequence
 from electrical_measurements.switching.contact_map import ContactMap
@@ -159,6 +160,70 @@ def test_step_level_overrides_work(tmp_path):
         },
     )
     resolved = validate_measurement_sequence(sequence, _contact_map())
-    assert resolved[0].measure_channels == ["M1", "M2"]
+    assert resolved[0].measure_channels == ("M1", "M2")
     assert resolved[0].harmonic == 2
     assert resolved[0].repeats == 3
+
+
+def test_invalid_channel_rejected_via_capabilities(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M9", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1},
+            "steps": [{"name": "bad", "state": "I_AB_V_CD"}],
+        },
+    )
+    with pytest.raises(SequenceValidationError, match="unknown M81 measurement channels"):
+        validate_measurement_sequence(sequence, _contact_map(), capabilities=InstrumentCapabilities(sources=("S1",), measure_channels=("M1", "M2")))
+
+
+def test_custom_capabilities_are_accepted(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {"excitation_mode": "ac", "source": "SRC_A", "measure_channel": "MEAS_A", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1},
+            "steps": [{"name": "ok", "state": "I_AB_V_CD"}],
+        },
+    )
+    resolved = validate_measurement_sequence(
+        sequence,
+        _contact_map(),
+        capabilities=InstrumentCapabilities(sources=("SRC_A",), measure_channels=("MEAS_A",)),
+    )
+    assert resolved[0].source == "SRC_A"
+    assert resolved[0].measure_channels == ("MEAS_A",)
+
+
+def test_reciprocal_of_accepted_and_normalized(tmp_path, caplog):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1},
+            "steps": [
+                {"name": "a", "state": "I_AB_V_CD"},
+                {"name": "b", "state": "I_CD_V_AB", "reciprocal_of": "a"},
+            ],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    assert resolved[1].reciprocal_step_of == "a"
+    assert "deprecated reciprocal_of" in caplog.text
+
+
+def test_reciprocal_step_of_accepted(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1},
+            "steps": [
+                {"name": "a", "state": "I_AB_V_CD"},
+                {"name": "b", "state": "I_CD_V_AB", "reciprocal_step_of": "a"},
+            ],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    assert resolved[1].reciprocal_step_of == "a"

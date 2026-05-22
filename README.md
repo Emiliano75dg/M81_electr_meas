@@ -173,6 +173,8 @@ Safety note:
 - all relay switching still goes through `Matrix7709.apply_state()`
 - sequence runs never bypass the matrix safety interlock
 - dry-run preview prints the resolved plan without touching hardware
+- the dry-run table includes resolved relays, excitation parameters, outputs, repeats, tags, and reciprocity links
+- legacy protocol classes now expose sequence preset builders so protocol definitions and sequence mode can converge over time without breaking the old CLI
 
 ## Mock mode
 

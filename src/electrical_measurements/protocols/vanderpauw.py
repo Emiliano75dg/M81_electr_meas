@@ -4,10 +4,50 @@ from typing import Any
 
 from ..analysis.reciprocity import reciprocity_error
 from ..analysis.vanderpauw import compute_vanderpauw_anisotropy, solve_vanderpauw_sheet_resistance
+from ..sequences.schema import MeasurementSequence, SequenceDefaults, SequenceStep
 from .base import MeasurementPoint, MeasurementProtocol
 
 
 class VanDerPauwProtocol(MeasurementProtocol):
+    @classmethod
+    def default_sequence(
+        cls,
+        *,
+        contact_map: Any,
+        states: list[str] | None = None,
+        current_rms_a: float = 10e-6,
+        frequency_hz: float = 13.7,
+        harmonic: int = 1,
+        measure_channel: str = "M1",
+        source: str = "S1",
+    ) -> MeasurementSequence:
+        selected_states = states or ["I_AB_V_CD", "I_BC_V_DA", "I_CD_V_AB", "I_DA_V_BC"]
+        return MeasurementSequence(
+            name="vanderpauw_default",
+            description="Legacy Van der Pauw preset expressed as a measurement sequence.",
+            contact_map=str(getattr(contact_map, "path", "") or ""),
+            defaults=SequenceDefaults(
+                excitation_mode="ac",
+                source=source,
+                measure_channel=measure_channel,
+                current_rms_a=current_rms_a,
+                frequency_hz=frequency_hz,
+                harmonic=harmonic,
+                settle_s=0.1,
+                repeats=1,
+                lockin=True,
+                metadata={"legacy_protocol": cls.__name__},
+            ),
+            steps=[
+                SequenceStep(
+                    name=f"measure_{state.lower()}",
+                    state=state,
+                    outputs={measure_channel: {"name": f"{state.lower()}_ohm", "transform": "lockin_x_over_current"}},
+                )
+                for state in selected_states
+            ],
+        )
+
     def __init__(
         self,
         *,

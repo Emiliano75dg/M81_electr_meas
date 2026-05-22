@@ -4,10 +4,51 @@ from typing import Any
 
 from ..analysis.hall import compute_hall_density, compute_mobility
 from ..exceptions import HardwareError, MatrixSwitchError, ProtocolConfigError
+from ..sequences.schema import MeasurementSequence, SequenceDefaults, SequenceStep
 from .base import MeasurementPoint, MeasurementProtocol
 
 
 class HallProtocol(MeasurementProtocol):
+    @classmethod
+    def default_sequence(
+        cls,
+        *,
+        contact_map: Any,
+        state: str = "hallbar_forward",
+        current_rms_a: float = 10e-6,
+        frequency_hz: float = 13.7,
+        harmonic: int = 1,
+        measure_channel: str = "M2",
+        source: str = "S1",
+    ) -> MeasurementSequence:
+        transverse_channel = contact_map.instrument_channel("vxy_meter") or measure_channel
+        longitudinal_channel = contact_map.instrument_channel("vxx_meter")
+        channels = [transverse_channel]
+        outputs: dict[str, dict[str, str]] = {
+            transverse_channel: {"name": "rxy_ohm", "transform": "lockin_x_over_current"},
+        }
+        if longitudinal_channel and longitudinal_channel not in channels:
+            channels.append(longitudinal_channel)
+            outputs[longitudinal_channel] = {"name": "rxx_ohm", "transform": "lockin_x_over_current"}
+        return MeasurementSequence(
+            name="hall_default",
+            description="Legacy Hall preset expressed as a measurement sequence.",
+            contact_map=str(getattr(contact_map, "path", "") or ""),
+            defaults=SequenceDefaults(
+                excitation_mode="ac",
+                source=contact_map.instrument_channel("current_source") or source,
+                measure_channels=channels,
+                current_rms_a=current_rms_a,
+                frequency_hz=frequency_hz,
+                harmonic=harmonic,
+                settle_s=0.1,
+                repeats=1,
+                lockin=True,
+                metadata={"legacy_protocol": cls.__name__},
+            ),
+            steps=[SequenceStep(name="hall_forward", state=state, measure_kind="transverse", outputs=outputs)],
+        )
+
     """Hall measurement protocol for carrier concentration extraction.
 
     Measures transverse (Hall, Rxy) and longitudinal (Rxx) resistances as a

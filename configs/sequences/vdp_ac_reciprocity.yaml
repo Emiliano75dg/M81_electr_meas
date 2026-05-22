@@ -21,7 +21,7 @@ steps:
   - name: r_cd_ab_reciprocal
     state: I_CD_V_AB
     measure_kind: longitudinal
-    reciprocal_of: r_ab_cd
+    reciprocal_step_of: r_ab_cd
     outputs:
       M1: r_cd_ab_ohm
     tags: [vdp, ac, reciprocity]
@@ -34,7 +34,7 @@ steps:
   - name: r_da_bc_reciprocal
     state: I_DA_V_BC
     measure_kind: longitudinal
-    reciprocal_of: r_bc_da
+    reciprocal_step_of: r_bc_da
     outputs:
       M1: r_da_bc_ohm
     tags: [vdp, ac, reciprocity]

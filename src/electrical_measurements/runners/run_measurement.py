@@ -12,7 +12,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from ..capabilities import instrument_capabilities_from_config, instrument_capabilities_from_controller
 from ..exceptions import RunnerInputError
+from ..excitation import validate_legacy_ac_cli_args
 from ..analysis.antisymmetrize import antisymmetrize_in_field
 from ..analysis.hall import compute_hall_density, compute_mobility, fit_hall_slope, infer_carrier_sign
 from ..analysis.reciprocity import match_reciprocal_field
@@ -31,6 +33,7 @@ from ..io.dataset import measurement_points_to_dataframe, save_dataset
 from ..io.logging import configure_logging
 from ..io.metadata import build_metadata, write_metadata
 from ..io.notifications import build_notifier
+from ..records import MeasurementRecordBuilder, OutputSpec
 from ..protocols.contact_check import ContactCheckProtocol
 from ..protocols.hall import HallProtocol
 from ..protocols.magnetoresistance import MagnetoresistanceProtocol
@@ -43,6 +46,7 @@ from ..switching.contact_map import ContactMap
 from ..switching.matrix7709 import Matrix7709, SafeMeasurementSession
 
 LOGGER = logging.getLogger(__name__)
+STREAM_RECORD_BUILDER = MeasurementRecordBuilder(context_name="legacy_stream")
 
 
 @dataclass
@@ -171,6 +175,8 @@ def parse_float_list(value: str | None) -> list[float]:
 
 def validate_run_inputs(args: argparse.Namespace, contact_map: ContactMap) -> None:
     if getattr(args, "sequence", None):
+        if getattr(args, "protocol", None):
+            raise RunnerInputError("--sequence cannot be combined with --protocol")
         if getattr(args, "state_name", None) or getattr(args, "selected_states", None):
             raise RunnerInputError("--sequence cannot be combined with --state-name or --selected-states")
         if getattr(args, "mode", "stable") not in {"stable", "stream-observe", "stream-ramp"}:
@@ -197,13 +203,11 @@ def validate_run_inputs(args: argparse.Namespace, contact_map: ContactMap) -> No
         if getattr(args, "ramp_rate", None) is None or float(args.ramp_rate) <= 0:
             raise RunnerInputError("--ramp-rate must be > 0 in stream-ramp mode")
     if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "vdp_hall", "reciprocity"}:
-        if getattr(args, "current", 0.0) <= 0:
-            raise RunnerInputError("--current must be > 0 for the selected protocol")
-    if getattr(args, "protocol", "") in {"hall", "hallbar_mr", "second_harmonic", "vdp", "vdp_hall", "reciprocity"}:
-        if getattr(args, "frequency", 0.0) <= 0:
-            raise RunnerInputError("--frequency must be > 0 for the selected protocol")
-    if getattr(args, "harmonic", 1) < 1:
-        raise RunnerInputError("--harmonic must be >= 1")
+        validate_legacy_ac_cli_args(
+            current=float(getattr(args, "current", 0.0)),
+            frequency=float(getattr(args, "frequency", 0.0)),
+            harmonic=int(getattr(args, "harmonic", 1)),
+        )
     state_name = getattr(args, "state_name", None)
     if state_name and state_name not in contact_map.states:
         raise RunnerInputError(f"Unknown --state-name: {state_name}")
@@ -220,7 +224,7 @@ def build_run_namespace(
     mock: bool = False,
     sample_id: str | None = None,
     output: str | None = None,
-    protocol: str = "hallbar_mr",
+    protocol: str | None = None,
     temperatures: str | None = None,
     fields: str | None = None,
     current: float = 10e-6,
@@ -320,38 +324,50 @@ def build_stream_record(
     stream_mode: str,
 ) -> dict[str, Any]:
     current_rms = getattr(protocol, "current_rms_a", None)
-    lockin_x = trace_row.get("x")
     frequency = trace_row.get("frequency_hz") or getattr(protocol, "frequency_hz", None)
     harmonic_value = trace_row.get("harmonic") or harmonic
     protocol_name = protocol.__class__.__name__.replace("Protocol", "").lower()
-    derived_resistance = None if not current_rms or lockin_x is None else lockin_x / current_rms
-    return {
-        "timestamp": trace_row["timestamp"],
-        "sample_id": protocol.sample_id,
-        "protocol": protocol_name,
-        "geometry": contact_map.name,
-        "state": getattr(protocol, "state", None),
-        "reciprocal_state": contact_map.states.get(getattr(protocol, "state", ""), {}).get("reciprocal"),
-        "trace_channel": trace_row.get("trace_channel", measure_channel),
-        "trace_index": trace_row.get("trace_index"),
-        "measure_channel": measure_channel,
-        "source_channel": source_channel,
-        "frequency_hz": frequency,
-        "harmonic": harmonic_value,
-        "source_current_a_rms": current_rms,
-        "source_current_a_peak": None if current_rms is None else current_rms * 2**0.5,
-        "lockin_x": lockin_x,
-        "lockin_y": trace_row.get("y"),
-        "lockin_r": trace_row.get("r"),
-        "lockin_theta_deg": trace_row.get("theta_deg"),
-        "field_t": trace_row.get("field_t"),
-        "temperature_k": trace_row.get("temperature_k"),
-        "environment_timestamp": trace_row.get("environment_timestamp"),
-        "matrix_relay_channels": trace_row.get("matrix_relay_channels"),
-        "rxx_ohm": derived_resistance if protocol_name == "magnetoresistance" else None,
-        "rxy_ohm": derived_resistance if protocol_name in {"hall", "hallbar"} else None,
-        "stream_mode": stream_mode,
-    }
+    outputs: dict[str, OutputSpec] = {}
+    if protocol_name == "magnetoresistance":
+        outputs[measure_channel] = OutputSpec(name="rxx_ohm", transform="lockin_x_over_current")
+    elif protocol_name in {"hall", "hallbar"}:
+        outputs[measure_channel] = OutputSpec(name="rxy_ohm", transform="lockin_x_over_current")
+    record = STREAM_RECORD_BUILDER.build(
+        sample_id=protocol.sample_id,
+        geometry=contact_map.name,
+        step_index=None,
+        step_name=None,
+        state_name=getattr(protocol, "state", None),
+        relay_channels=trace_row.get("matrix_relay_channels") or [],
+        excitation_mode="ac",
+        source_channel=source_channel,
+        measure_channels=[measure_channel],
+        readings={measure_channel: dict(trace_row)},
+        outputs=outputs,
+        tags=[],
+        reciprocal_step_of=None,
+        timestamp=trace_row["timestamp"],
+        temperature_k=trace_row.get("temperature_k"),
+        field_t=trace_row.get("field_t"),
+        ac_current_rms_a=current_rms,
+        frequency_hz=frequency,
+        harmonic=harmonic_value,
+        metadata={
+            "protocol_name": protocol_name,
+            "reciprocal_state": contact_map.states.get(getattr(protocol, "state", ""), {}).get("reciprocal"),
+            "environment_timestamp": trace_row.get("environment_timestamp"),
+            "stream_mode": stream_mode,
+        },
+        extra={
+            "protocol": protocol_name,
+            "trace_channel": trace_row.get("trace_channel", measure_channel),
+            "trace_index": trace_row.get("trace_index"),
+            "environment_timestamp": trace_row.get("environment_timestamp"),
+            "stream_mode": stream_mode,
+            "reciprocal_state": contact_map.states.get(getattr(protocol, "state", ""), {}).get("reciprocal"),
+        },
+    )
+    return record
 
 
 def extract_last_environment_values(df: pd.DataFrame) -> tuple[float | None, float | None]:
@@ -688,6 +704,127 @@ def run_sequence_stream_command(
     )
 
 
+def run_sequence_command(
+    args: argparse.Namespace,
+    *,
+    config: dict[str, Any],
+    contact_map: ContactMap,
+    started_at: str,
+) -> RunSummary:
+    capabilities = instrument_capabilities_from_config(config)
+    sequence = load_measurement_sequence(args.sequence)
+    resolved_steps = validate_measurement_sequence(sequence, contact_map, capabilities=capabilities)
+    LOGGER.info(
+        "Starting sequence run sequence=%s mode=%s environment_mode=%s contact_map=%s mock=%s",
+        sequence.name,
+        args.mode,
+        getattr(args, "environment_mode", None),
+        contact_map.name,
+        args.mock,
+    )
+    if args.dry_run:
+        preview_runner = SequenceRunner(
+            sequence=sequence,
+            contact_map=contact_map,
+            resolved_steps=resolved_steps,
+            dry_run=True,
+            sample_id=args.sample_id or config.get("sample_id", "sample"),
+        )
+        print(preview_runner.format_preview())
+        return RunSummary(
+            protocol=sequence.name,
+            sample_id=args.sample_id or config.get("sample_id", "sample"),
+            output_dir=str(args.output or config.get("output", {}).get("directory", "data")),
+            row_count=0,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            last_temperature_k=None,
+            last_field_t=None,
+        )
+    m81, matrix, environment = build_instruments(config, contact_map, mock=args.mock)
+    runtime_capabilities = instrument_capabilities_from_controller(m81)
+    resolved_steps = validate_measurement_sequence(sequence, contact_map, capabilities=runtime_capabilities)
+    runner = SequenceRunner(
+        sequence=sequence,
+        contact_map=contact_map,
+        resolved_steps=resolved_steps,
+        m81=m81,
+        matrix=matrix,
+        dry_run=False,
+        sample_id=args.sample_id or config.get("sample_id", "sample"),
+    )
+    with SafeMeasurementSession(m81, matrix):
+        if args.mode in {"stream-observe", "stream-ramp"}:
+            return run_sequence_stream_command(args, config, contact_map, environment, runner)
+        temperatures = parse_float_list(args.temperatures)
+        fields = parse_float_list(args.fields)
+        frames = []
+        for temperature in temperatures:
+            for field in fields:
+                current_temperature, current_field = position_environment(environment, temperature, field)
+                if hasattr(m81, "field_t"):
+                    m81.field_t = current_field if current_field is not None else field
+                if hasattr(m81, "temperature_k"):
+                    m81.temperature_k = current_temperature if current_temperature is not None else temperature
+                frames.append(runner.run(temperature_k=current_temperature, field_t=current_field))
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        return finalize_run_outputs(
+            args=args,
+            config=config,
+            contact_map=contact_map,
+            df=df,
+            metadata_notes=f"sequence {sequence.name}",
+            stem=sequence.name,
+            started_at=started_at,
+        )
+
+
+def run_legacy_protocol_command(
+    args: argparse.Namespace,
+    *,
+    config: dict[str, Any],
+    contact_map: ContactMap,
+    started_at: str,
+) -> RunSummary:
+    LOGGER.info(
+        "Starting run protocol=%s mode=%s environment_mode=%s contact_map=%s mock=%s",
+        args.protocol,
+        args.mode,
+        getattr(args, "environment_mode", None),
+        contact_map.name,
+        args.mock,
+    )
+    m81, matrix, environment = build_instruments(config, contact_map, mock=args.mock)
+    protocol = build_protocol(args, config, contact_map, m81, matrix)
+    if args.mode == "stream-ramp":
+        return run_stream_ramp_command(args, config, contact_map, m81, matrix, environment, protocol)
+    if args.mode == "stream-observe":
+        return run_stream_observe_command(args, config, contact_map, m81, matrix, environment, protocol)
+    temperatures = parse_float_list(args.temperatures)
+    fields = parse_float_list(args.fields)
+    points = []
+    protocol.setup()
+    with SafeMeasurementSession(m81, matrix):
+        for temperature in temperatures:
+            for field in fields:
+                current_temperature, current_field = position_environment(environment, temperature, field)
+                if hasattr(m81, "field_t"):
+                    m81.field_t = current_field if current_field is not None else field
+                if hasattr(m81, "temperature_k"):
+                    m81.temperature_k = current_temperature if current_temperature is not None else temperature
+                points.append(protocol.measure_point(temperature_k=current_temperature, field_t=current_field))
+    protocol.teardown()
+    df = measurement_points_to_dataframe(points)
+    df = postprocess_dataframe(df, args.protocol)
+    return finalize_run_outputs(
+        args=args,
+        config=config,
+        contact_map=contact_map,
+        df=df,
+        started_at=started_at,
+    )
+
+
 def run_command(args: argparse.Namespace) -> int:
     config = apply_environment_mode_override(load_yaml(args.config), getattr(args, "environment_mode", None))
     configure_logging(config.get("logging", {}).get("level", "INFO"))
@@ -696,101 +833,11 @@ def run_command(args: argparse.Namespace) -> int:
     try:
         contact_map = ContactMap.from_yaml(args.contact_map)
         validate_run_inputs(args, contact_map)
-        if getattr(args, "sequence", None):
-            sequence = load_measurement_sequence(args.sequence)
-            resolved_steps = validate_measurement_sequence(sequence, contact_map)
-            LOGGER.info(
-                "Starting sequence run sequence=%s mode=%s environment_mode=%s contact_map=%s mock=%s",
-                sequence.name,
-                args.mode,
-                getattr(args, "environment_mode", None),
-                contact_map.name,
-                args.mock,
-            )
-            if args.dry_run:
-                preview_runner = SequenceRunner(
-                    sequence=sequence,
-                    contact_map=contact_map,
-                    resolved_steps=resolved_steps,
-                    dry_run=True,
-                    sample_id=args.sample_id or config.get("sample_id", "sample"),
-                )
-                print(preview_runner.format_preview())
-                return 0
-            m81, matrix, environment = build_instruments(config, contact_map, mock=args.mock)
-            runner = SequenceRunner(
-                sequence=sequence,
-                contact_map=contact_map,
-                resolved_steps=resolved_steps,
-                m81=m81,
-                matrix=matrix,
-                dry_run=False,
-                sample_id=args.sample_id or config.get("sample_id", "sample"),
-            )
-            with SafeMeasurementSession(m81, matrix):
-                if args.mode in {"stream-observe", "stream-ramp"}:
-                    summary = run_sequence_stream_command(args, config, contact_map, environment, runner)
-                else:
-                    temperatures = parse_float_list(args.temperatures)
-                    fields = parse_float_list(args.fields)
-                    frames = []
-                    for temperature in temperatures:
-                        for field in fields:
-                            current_temperature, current_field = position_environment(environment, temperature, field)
-                            if hasattr(m81, "field_t"):
-                                m81.field_t = current_field if current_field is not None else field
-                            if hasattr(m81, "temperature_k"):
-                                m81.temperature_k = current_temperature if current_temperature is not None else temperature
-                            frames.append(runner.run(temperature_k=current_temperature, field_t=current_field))
-                    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-                    summary = finalize_run_outputs(
-                        args=args,
-                        config=config,
-                        contact_map=contact_map,
-                        df=df,
-                        metadata_notes=f"sequence {sequence.name}",
-                        stem=sequence.name,
-                        started_at=started_at,
-                    )
-        else:
-            LOGGER.info(
-                "Starting run protocol=%s mode=%s environment_mode=%s contact_map=%s mock=%s",
-                args.protocol,
-                args.mode,
-                getattr(args, "environment_mode", None),
-                contact_map.name,
-                args.mock,
-            )
-            m81, matrix, environment = build_instruments(config, contact_map, mock=args.mock)
-            protocol = build_protocol(args, config, contact_map, m81, matrix)
-            if args.mode == "stream-ramp":
-                summary = run_stream_ramp_command(args, config, contact_map, m81, matrix, environment, protocol)
-            elif args.mode == "stream-observe":
-                summary = run_stream_observe_command(args, config, contact_map, m81, matrix, environment, protocol)
-            else:
-                temperatures = parse_float_list(args.temperatures)
-                fields = parse_float_list(args.fields)
-                points = []
-                protocol.setup()
-                with SafeMeasurementSession(m81, matrix):
-                    for temperature in temperatures:
-                        for field in fields:
-                            current_temperature, current_field = position_environment(environment, temperature, field)
-                            if hasattr(m81, "field_t"):
-                                m81.field_t = current_field if current_field is not None else field
-                            if hasattr(m81, "temperature_k"):
-                                m81.temperature_k = current_temperature if current_temperature is not None else temperature
-                            points.append(protocol.measure_point(temperature_k=current_temperature, field_t=current_field))
-                protocol.teardown()
-                df = measurement_points_to_dataframe(points)
-                df = postprocess_dataframe(df, args.protocol)
-                summary = finalize_run_outputs(
-                    args=args,
-                    config=config,
-                    contact_map=contact_map,
-                    df=df,
-                    started_at=started_at,
-                )
+        summary = (
+            run_sequence_command(args, config=config, contact_map=contact_map, started_at=started_at)
+            if getattr(args, "sequence", None)
+            else run_legacy_protocol_command(args, config=config, contact_map=contact_map, started_at=started_at)
+        )
     except Exception as exc:
         notifier.notify(
             "measurement_failed",

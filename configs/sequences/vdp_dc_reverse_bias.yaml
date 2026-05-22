@@ -28,7 +28,7 @@ steps:
     state: I_CD_V_AB
     bias_polarity: 1
     measure_kind: longitudinal
-    reciprocal_of: r_ab_cd_plus
+    reciprocal_step_of: r_ab_cd_plus
     outputs:
       M1: r_cd_ab_plus_ohm
     tags: [vdp, dc, reciprocity]
@@ -36,7 +36,7 @@ steps:
     state: I_CD_V_AB
     bias_polarity: -1
     measure_kind: longitudinal
-    reciprocal_of: r_ab_cd_minus
+    reciprocal_step_of: r_ab_cd_minus
     outputs:
       M1: r_cd_ab_minus_ohm
     tags: [vdp, dc, reciprocity]

@@ -2,10 +2,49 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..sequences.schema import MeasurementSequence, SequenceDefaults, SequenceStep
 from .base import MeasurementPoint, MeasurementProtocol
 
 
 class SecondHarmonicProtocol(MeasurementProtocol):
+    @classmethod
+    def default_sequence(
+        cls,
+        *,
+        contact_map: Any,
+        state: str,
+        current_rms_a: float,
+        frequency_hz: float,
+        harmonic: int = 2,
+        measure_channel: str = "M2",
+        source: str = "S1",
+    ) -> MeasurementSequence:
+        return MeasurementSequence(
+            name="second_harmonic_default",
+            description="Legacy second-harmonic preset expressed as a measurement sequence.",
+            contact_map=str(getattr(contact_map, "path", "") or ""),
+            defaults=SequenceDefaults(
+                excitation_mode="ac",
+                source=source,
+                measure_channel=measure_channel,
+                current_rms_a=current_rms_a,
+                frequency_hz=frequency_hz,
+                harmonic=harmonic,
+                settle_s=0.1,
+                repeats=1,
+                lockin=True,
+                metadata={"legacy_protocol": cls.__name__},
+            ),
+            steps=[
+                SequenceStep(
+                    name="second_harmonic",
+                    state=state,
+                    measure_kind="transverse",
+                    outputs={measure_channel: {"name": "r2w_ohm", "transform": "lockin_x_over_current"}},
+                )
+            ],
+        )
+
     def __init__(
         self,
         *,

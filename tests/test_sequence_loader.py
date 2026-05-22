@@ -81,4 +81,7 @@ def test_roundtrip_sequence_dict_conversion():
     rebuilt = measurement_sequence_from_dict(payload)
     assert rebuilt.name == original.name
     assert rebuilt.defaults.measure_channels == ["M1", "M2"]
-    assert rebuilt.steps[0].outputs == {"M1": "rxx_ohm", "M2": "rxy_ohm"}
+    assert rebuilt.steps[0].outputs == {
+        "M1": {"name": "rxx_ohm", "transform": "lockin_x_over_current"},
+        "M2": {"name": "rxy_ohm", "transform": "lockin_x_over_current"},
+    }

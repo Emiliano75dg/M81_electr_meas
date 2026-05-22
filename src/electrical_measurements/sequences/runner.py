@@ -7,23 +7,14 @@ from typing import Any
 
 import pandas as pd
 
+from ..excitation import ACExcitation, DCExcitation, configure_m81_source_for_ac, configure_m81_source_for_dc
+from ..records import MeasurementRecordBuilder
 from ..switching.contact_map import ContactMap
 from .schema import MeasurementSequence, ResolvedSequenceStep
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _measurement_value(excitation_mode: str, reading: dict[str, Any]) -> float | None:
-    key = "x" if excitation_mode == "ac" else "value"
-    value = reading.get(key)
-    return None if value is None else float(value)
-
-
-def _semantic_is_resistance_like(name: str) -> bool:
-    lowered = name.strip().lower()
-    return lowered.endswith("_ohm") or (lowered.startswith("r") and "voltage" not in lowered)
 
 
 @dataclass
@@ -36,6 +27,9 @@ class SequenceRunner:
     dry_run: bool = False
     sample_id: str = "sample"
 
+    def __post_init__(self) -> None:
+        self.record_builder = MeasurementRecordBuilder(context_name="sequence")
+
     def build_preview_rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for step in self.resolved_steps:
@@ -44,30 +38,58 @@ class SequenceRunner:
                     "idx": step.index + 1,
                     "name": step.name,
                     "state": step.state,
-                    "mode": step.excitation_mode,
-                    "source": step.source,
-                    "current": (
-                        f"{step.actual_dc_current_a:.6g} A"
-                        if step.excitation_mode == "dc" and step.actual_dc_current_a is not None
-                        else f"{step.current_rms_a:.6g} Arms @ {step.frequency_hz:.6g} Hz h{step.harmonic}"
-                    ),
-                    "measure": ",".join(step.measure_channels),
-                    "outputs": ",".join(f"{channel}:{name}" for channel, name in step.outputs.items()),
                     "relays": ",".join(str(channel) for channel in step.relay_channels),
+                    "excitation_mode": step.excitation_mode,
+                    "dc_current_a": (
+                        f"{step.actual_dc_current_a:.6g}" if step.excitation_mode == "dc" and step.actual_dc_current_a is not None else ""
+                    ),
+                    "current_rms_a": (
+                        f"{step.current_rms_a:.6g}" if step.excitation_mode == "ac" and step.current_rms_a is not None else ""
+                    ),
+                    "frequency_hz": (
+                        f"{step.frequency_hz:.6g}" if step.excitation_mode == "ac" and step.frequency_hz is not None else ""
+                    ),
+                    "harmonic": step.harmonic if step.excitation_mode == "ac" and step.harmonic is not None else "",
+                    "source": step.source,
+                    "measure_channels": ",".join(step.measure_channels),
+                    "outputs": ",".join(f"{channel}:{spec.name}/{spec.transform}" for channel, spec in step.outputs.items()),
+                    "settle_s": f"{step.settle_s:.6g}",
+                    "repeats": step.repeats,
                     "tags": ",".join(step.tags),
-                    "reciprocal_of": step.reciprocal_of or "",
+                    "reciprocal_step_of": step.reciprocal_step_of or "",
+                    "warnings": " | ".join(step.warnings),
                 }
             )
         return rows
 
     def format_preview(self) -> str:
-        headers = ["idx", "name", "state", "mode", "source", "current", "measure", "outputs", "relays", "tags", "reciprocal_of"]
+        headers = [
+            "idx",
+            "name",
+            "state",
+            "relays",
+            "excitation_mode",
+            "dc_current_a",
+            "current_rms_a",
+            "frequency_hz",
+            "harmonic",
+            "source",
+            "measure_channels",
+            "outputs",
+            "settle_s",
+            "repeats",
+            "tags",
+            "reciprocal_step_of",
+            "warnings",
+        ]
         rows = self.build_preview_rows()
         widths = {
             header: max(len(header), *(len(str(row.get(header, ""))) for row in rows))
             for header in headers
         }
         lines = [
+            "Dry-run only. Actual relay switching still uses Matrix7709.apply_state().",
+            "",
             " ".join(header.ljust(widths[header]) for header in headers),
             " ".join("-" * widths[header] for header in headers),
         ]
@@ -75,21 +97,34 @@ class SequenceRunner:
             lines.append(" ".join(str(row.get(header, "")).ljust(widths[header]) for header in headers))
         return "\n".join(lines)
 
-    def _configure_measurement_channels(self, step: ResolvedSequenceStep) -> None:
-        if self.m81 is None:
-            return
-        if step.excitation_mode == "dc":
-            for measure_channel in step.measure_channels:
-                self.m81.configure_dc_measure(measure_channel)
-            self.m81.configure_dc_current(step.source, step.actual_dc_current_a or 0.0)
-            return
-        self.m81.configure_ac_current_lockin(
+    def _resolve_dc_excitation(self, step: ResolvedSequenceStep) -> DCExcitation:
+        return DCExcitation(
+            source=step.source,
+            current_a=step.current_a or 0.0,
+            bias_polarity=step.bias_polarity or 1,
+            settle_s=step.settle_s,
+        )
+
+    def _resolve_ac_excitation(self, step: ResolvedSequenceStep) -> ACExcitation:
+        return ACExcitation(
             source=step.source,
             current_rms_a=step.current_rms_a or 0.0,
             frequency_hz=step.frequency_hz or 0.0,
-            measure_channels=step.measure_channels,
             harmonic=step.harmonic or 1,
+            settle_s=step.settle_s,
+            lockin=step.lockin,
         )
+
+    def _configure_excitation(self, step: ResolvedSequenceStep) -> DCExcitation | ACExcitation:
+        if self.m81 is None:
+            raise RuntimeError("SequenceRunner requires m81 in non-dry-run mode")
+        if step.excitation_mode == "dc":
+            excitation = self._resolve_dc_excitation(step)
+            configure_m81_source_for_dc(self.m81, excitation, list(step.measure_channels))
+            return excitation
+        excitation = self._resolve_ac_excitation(step)
+        configure_m81_source_for_ac(self.m81, excitation, list(step.measure_channels))
+        return excitation
 
     def _read_channels(self, step: ResolvedSequenceStep) -> dict[str, dict[str, Any]]:
         if self.m81 is None:
@@ -127,66 +162,45 @@ class SequenceRunner:
         *,
         step: ResolvedSequenceStep,
         repeat_index: int,
+        relay_channels: list[int] | tuple[int, ...],
         readings: dict[str, dict[str, Any]],
         temperature_k: float | None,
         field_t: float | None,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        record: dict[str, Any] = {
-            "timestamp": _utcnow(),
-            "sample_id": self.sample_id,
-            "protocol": "sequence",
-            "sequence_name": self.sequence.name,
-            "sequence_description": self.sequence.description,
-            "geometry": self.contact_map.name,
-            "step_name": step.name,
-            "step_index": step.index,
-            "repeat_index": repeat_index,
-            "state": step.state,
-            "reciprocal_of": step.reciprocal_of,
-            "matrix_relay_channels": step.relay_channels,
-            "temperature_k": temperature_k,
-            "field_t": field_t,
-            "excitation_mode": step.excitation_mode,
-            "source_channel": step.source,
-            "measure_channel": step.primary_measure_channel,
-            "measure_channels": list(step.measure_channels),
-            "measure_kind": step.measure_kind,
-            "tags": list(step.tags),
-            "outputs": dict(step.outputs),
-            "bias_polarity": step.bias_polarity,
-            "source_current_a_dc": step.actual_dc_current_a,
-            "source_current_a_rms": step.current_rms_a,
-            "source_current_a_peak": None if step.current_rms_a is None else step.current_rms_a * 2**0.5,
-            "frequency_hz": step.frequency_hz,
-            "harmonic": step.harmonic,
-            "metadata": dict(step.metadata),
-        }
-        for channel, reading in readings.items():
-            prefix = channel.lower()
-            if step.excitation_mode == "dc":
-                record[f"{prefix}_dc_value"] = reading.get("value")
-            else:
-                record[f"{prefix}_lockin_x"] = reading.get("x")
-                record[f"{prefix}_lockin_y"] = reading.get("y")
-                record[f"{prefix}_lockin_r"] = reading.get("r")
-                record[f"{prefix}_lockin_theta_deg"] = reading.get("theta_deg")
-        for channel, semantic in step.outputs.items():
-            reading = readings.get(channel, {})
-            value = _measurement_value(step.excitation_mode, reading)
-            if value is not None:
-                record[semantic] = value if not _semantic_is_resistance_like(semantic) else (
-                    value / (abs(step.actual_dc_current_a) if step.excitation_mode == "dc" else (step.current_rms_a or 0.0))
-                )
-        if step.primary_measure_channel:
-            primary = readings.get(step.primary_measure_channel, {})
-            if step.excitation_mode == "dc":
-                record["dc_value"] = primary.get("value")
-            else:
-                record["lockin_x"] = primary.get("x")
-                record["lockin_y"] = primary.get("y")
-                record["lockin_r"] = primary.get("r")
-                record["lockin_theta_deg"] = primary.get("theta_deg")
-        return record
+        return self.record_builder.build(
+            sample_id=self.sample_id,
+            geometry=self.contact_map.name,
+            step_index=step.index,
+            step_name=step.name,
+            state_name=step.state,
+            relay_channels=relay_channels,
+            excitation_mode=step.excitation_mode,
+            source_channel=step.source,
+            measure_channels=list(step.measure_channels),
+            readings=readings,
+            outputs=step.outputs,
+            tags=list(step.tags),
+            reciprocal_step_of=step.reciprocal_step_of,
+            timestamp=_utcnow(),
+            temperature_k=temperature_k,
+            field_t=field_t,
+            dc_current_a=step.actual_dc_current_a,
+            bias_polarity=step.bias_polarity,
+            ac_current_rms_a=step.current_rms_a,
+            frequency_hz=step.frequency_hz,
+            harmonic=step.harmonic,
+            metadata={
+                "sequence_name": self.sequence.name,
+                "sequence_description": self.sequence.description,
+                **dict(step.metadata),
+            },
+            extra={
+                "sequence_name": self.sequence.name,
+                "sequence_description": self.sequence.description,
+                **(extra or {}),
+            },
+        )
 
     def run(self, *, temperature_k: float | None = None, field_t: float | None = None) -> pd.DataFrame:
         if self.dry_run:
@@ -197,11 +211,9 @@ class SequenceRunner:
         for step in self.resolved_steps:
             self.m81.disable_all_sources()
             relay_channels = self.matrix.apply_state(step.state)
-            if relay_channels:
-                step.relay_channels[:] = relay_channels
             if step.settle_s > 0:
                 time.sleep(step.settle_s)
-            self._configure_measurement_channels(step)
+            self._configure_excitation(step)
             self.m81.enable_source(step.source)
             try:
                 for repeat_index in range(step.repeats):
@@ -210,6 +222,7 @@ class SequenceRunner:
                         self._build_record(
                             step=step,
                             repeat_index=repeat_index,
+                            relay_channels=relay_channels,
                             readings=readings,
                             temperature_k=temperature_k,
                             field_t=field_t,
@@ -240,11 +253,9 @@ class SequenceRunner:
                 raise RuntimeError(f"Streaming sequence step '{step.name}' requires at least one measurement channel")
             self.m81.disable_all_sources()
             relay_channels = self.matrix.apply_state(step.state)
-            if relay_channels:
-                step.relay_channels[:] = relay_channels
             if step.settle_s > 0:
                 time.sleep(step.settle_s)
-            self._configure_measurement_channels(step)
+            self._configure_excitation(step)
             initial_temperature = environment.read_temperature() if hasattr(environment, "read_temperature") else temperature_k
             initial_field = environment.read_field() if hasattr(environment, "read_field") else field_t
             if hasattr(self.m81, "temperature_k") and initial_temperature is not None:
@@ -269,25 +280,25 @@ class SequenceRunner:
                         continue
                     trace_row = batch[0]
                     readings = self._merge_stream_trace_into_readings(step, trace_row)
-                    record = self._build_record(
-                        step=step,
-                        repeat_index=int(trace_row.get("trace_index", 0)),
-                        readings=readings,
-                        temperature_k=current_temperature,
-                        field_t=current_field,
+                    rows.append(
+                        self._build_record(
+                            step=step,
+                            repeat_index=int(trace_row.get("trace_index", 0)),
+                            relay_channels=relay_channels,
+                            readings=readings,
+                            temperature_k=current_temperature,
+                            field_t=current_field,
+                            extra={
+                                "protocol": "sequence_stream",
+                                "trace_channel": trace_row.get("trace_channel", step.primary_measure_channel),
+                                "trace_index": trace_row.get("trace_index"),
+                                "temperature_k_initial": initial_temperature,
+                                "field_t_initial": initial_field,
+                                "temperature_k_final": current_temperature,
+                                "field_t_final": current_field,
+                            },
+                        )
                     )
-                    record.update(
-                        {
-                            "protocol": "sequence_stream",
-                            "trace_channel": trace_row.get("trace_channel", step.primary_measure_channel),
-                            "trace_index": trace_row.get("trace_index"),
-                            "temperature_k_initial": initial_temperature,
-                            "field_t_initial": initial_field,
-                            "temperature_k_final": current_temperature,
-                            "field_t_final": current_field,
-                        }
-                    )
-                    rows.append(record)
                     time.sleep(min(stream_interval, 0.01))
             finally:
                 self.m81.abort_sweep()

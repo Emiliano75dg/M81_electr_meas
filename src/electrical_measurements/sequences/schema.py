@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..records import OutputSpec
+
 
 @dataclass(frozen=True)
 class SequenceDefaults:
@@ -38,8 +40,9 @@ class SequenceStep:
     repeats: int | None = None
     measure_kind: str | None = None
     tags: list[str] | None = None
+    reciprocal_step_of: str | None = None
     reciprocal_of: str | None = None
-    outputs: dict[str, str] | None = None
+    outputs: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -61,7 +64,7 @@ class ResolvedSequenceStep:
     state: str
     excitation_mode: str
     source: str
-    measure_channels: list[str]
+    measure_channels: tuple[str, ...]
     current_a: float | None
     current_rms_a: float | None
     frequency_hz: float | None
@@ -71,11 +74,12 @@ class ResolvedSequenceStep:
     repeats: int
     lockin: bool | None
     measure_kind: str | None
-    tags: list[str]
-    reciprocal_of: str | None
-    outputs: dict[str, str]
+    tags: tuple[str, ...]
+    reciprocal_step_of: str | None
+    outputs: dict[str, OutputSpec]
     metadata: dict[str, Any]
-    relay_channels: list[int] = field(default_factory=list)
+    relay_channels: tuple[int, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def primary_measure_channel(self) -> str | None:
@@ -87,4 +91,3 @@ class ResolvedSequenceStep:
             return None
         polarity = self.bias_polarity if self.bias_polarity is not None else 1
         return polarity * self.current_a
-

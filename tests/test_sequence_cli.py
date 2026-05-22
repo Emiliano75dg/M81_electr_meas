@@ -62,6 +62,38 @@ def test_sequence_conflicts_with_state_name(tmp_path: Path):
         run_command(args)
 
 
+def test_sequence_conflicts_with_protocol(tmp_path: Path):
+    config = _write_config(tmp_path)
+    args = build_run_namespace(
+        config=str(config),
+        contact_map="configs/contact_maps/vdp_4contacts_7709.yaml",
+        mock=True,
+        output=str(tmp_path),
+        protocol="vdp",
+        temperatures="300",
+        fields="0",
+        sequence="configs/sequences/vdp_ac_reciprocity.yaml",
+    )
+    with pytest.raises(RunnerInputError, match="cannot be combined with --protocol"):
+        run_command(args)
+
+
+def test_sequence_conflicts_with_selected_states(tmp_path: Path):
+    config = _write_config(tmp_path)
+    args = build_run_namespace(
+        config=str(config),
+        contact_map="configs/contact_maps/vdp_4contacts_7709.yaml",
+        mock=True,
+        output=str(tmp_path),
+        temperatures="300",
+        fields="0",
+        sequence="configs/sequences/vdp_ac_reciprocity.yaml",
+        selected_states="I_AB_V_CD",
+    )
+    with pytest.raises(RunnerInputError, match="cannot be combined"):
+        run_command(args)
+
+
 def test_old_state_name_behavior_still_works(tmp_path: Path):
     config = _write_config(tmp_path)
     args = build_run_namespace(
@@ -115,6 +147,30 @@ def test_sequence_dry_run_prints_preview_and_skips_hardware(tmp_path: Path, caps
     assert "r_ab_cd" in captured.out
     assert "relays" in captured.out
     assert not (tmp_path / "vdp_ac_reciprocity.csv").exists()
+
+
+def test_sequence_dry_run_does_not_build_hardware(tmp_path: Path, capsys, monkeypatch):
+    from electrical_measurements.runners import run_measurement
+
+    config = _write_config(tmp_path)
+    args = build_run_namespace(
+        config=str(config),
+        contact_map="configs/contact_maps/vdp_4contacts_7709.yaml",
+        output=str(tmp_path),
+        temperatures="300",
+        fields="0",
+        sequence="configs/sequences/vdp_ac_reciprocity.yaml",
+        dry_run=True,
+    )
+
+    def fail_build(*_args, **_kwargs):
+        raise AssertionError("dry-run should not instantiate hardware")
+
+    monkeypatch.setattr(run_measurement, "build_instruments", fail_build)
+    result = run_command(args)
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "Dry-run only" in captured.out
 
 
 def test_parser_accepts_sequence_without_protocol():

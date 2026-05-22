@@ -15,14 +15,20 @@ steps:
   - name: forward_rxx_rxy
     state: hallbar_forward
     outputs:
-      M1: rxx_ohm
-      M2: rxy_ohm
+      M1:
+        name: rxx_ohm
+        transform: lockin_x_over_current
+      M2:
+        name: rxy_ohm
+        transform: lockin_x_over_current
     measure_kind: hallbar
     tags: [hallbar, ac, forward]
   - name: reciprocal_check
     state: hallbar_reciprocal
     measure_channel: M1
     outputs:
-      M1: reciprocity_voltage
+      M1:
+        name: reciprocity_voltage
+        transform: raw
     measure_kind: reciprocity
     tags: [hallbar, ac, reciprocity]

@@ -305,6 +305,8 @@ Important distinctions:
 - magnetic-field reversal is handled by the outer field loop
 - temperature sweeps and ramps are handled by the outer environment loop
 - all relay switching still goes through `Matrix7709.apply_state()`
+- sequence dry-run previews show resolved relay channels, excitation parameters, outputs, repeats, tags, and reciprocity links without touching hardware
+- legacy protocol implementations keep working, and the codebase now also exposes protocol-to-sequence preset builders as a compatibility path
 
 Typical workflow:
 

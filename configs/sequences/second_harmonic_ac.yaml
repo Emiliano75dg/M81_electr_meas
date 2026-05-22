@@ -15,6 +15,8 @@ steps:
   - name: second_harmonic_vxy
     state: second_harmonic_vxy
     outputs:
-      M2: second_harmonic_voltage
+      M2:
+        name: second_harmonic_voltage
+        transform: raw
     measure_kind: second_harmonic
     tags: [second_harmonic, ac, lockin]
