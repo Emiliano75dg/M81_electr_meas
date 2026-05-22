@@ -1,0 +1,164 @@
+import pytest
+import yaml
+
+from electrical_measurements.exceptions import SequenceValidationError
+from electrical_measurements.sequences import load_measurement_sequence, validate_measurement_sequence
+from electrical_measurements.switching.contact_map import ContactMap
+
+
+def _contact_map():
+    return ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+
+
+def _write_sequence(tmp_path, payload):
+    path = tmp_path / "sequence.yaml"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    return load_measurement_sequence(path)
+
+
+def test_reject_unknown_state(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1}, "steps": [{"name": "bad", "state": "missing"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="unknown state"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_repeats_lt_1(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1, "repeats": 0}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="repeats"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_negative_settle(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1, "settle_s": -0.1}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="settle_s"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_invalid_excitation_mode(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "pulse", "source": "S1", "measure_channel": "M1"}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="dc.*ac"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_dc_without_current_a(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "dc", "source": "S1", "measure_channel": "M1"}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="current_a"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_dc_current_non_positive(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "dc", "source": "S1", "measure_channel": "M1", "current_a": 0.0}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="current_a"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_accept_dc_bias_polarity_plus_and_minus():
+    contact_map = _contact_map()
+    sequence = load_measurement_sequence("configs/sequences/vdp_dc_reverse_bias.yaml")
+    resolved = validate_measurement_sequence(sequence, contact_map)
+    assert {step.bias_polarity for step in resolved[:2]} == {1, -1}
+
+
+def test_reject_dc_bias_polarity_other_values(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "dc", "source": "S1", "measure_channel": "M1", "current_a": 1e-5}, "steps": [{"name": "ok", "state": "I_AB_V_CD", "bias_polarity": 0}]},
+    )
+    with pytest.raises(SequenceValidationError, match="bias_polarity"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_ac_without_current_rms_a(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "frequency_hz": 13.7, "harmonic": 1}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="current_rms_a"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_ac_without_frequency_hz(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "harmonic": 1}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="frequency_hz"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_ac_without_harmonic(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="harmonic"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_ac_current_non_positive(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 0.0, "frequency_hz": 13.7, "harmonic": 1}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="current_rms_a"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_ac_frequency_non_positive(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 0.0, "harmonic": 1}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="frequency_hz"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_ac_harmonic_lt_1(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 0}, "steps": [{"name": "ok", "state": "I_AB_V_CD"}]},
+    )
+    with pytest.raises(SequenceValidationError, match="harmonic"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_reject_bias_polarity_in_ac_by_default(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {"name": "demo", "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1}, "steps": [{"name": "ok", "state": "I_AB_V_CD", "bias_polarity": -1}]},
+    )
+    with pytest.raises(SequenceValidationError, match="bias_polarity"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_step_level_overrides_work(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {"excitation_mode": "ac", "source": "S1", "measure_channel": "M1", "current_rms_a": 1e-5, "frequency_hz": 13.7, "harmonic": 1, "repeats": 1},
+            "steps": [{"name": "override", "state": "I_AB_V_CD", "measure_channels": ["M1", "M2"], "harmonic": 2, "repeats": 3}],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    assert resolved[0].measure_channels == ["M1", "M2"]
+    assert resolved[0].harmonic == 2
+    assert resolved[0].repeats == 3

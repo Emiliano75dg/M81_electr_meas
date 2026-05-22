@@ -1,0 +1,40 @@
+name: vdp_ac_reciprocity
+description: AC Van der Pauw sequence with reciprocal configurations
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  excitation_mode: ac
+  source: S1
+  measure_channel: M1
+  current_rms_a: 1.0e-5
+  frequency_hz: 13.7
+  harmonic: 1
+  settle_s: 0.1
+  repeats: 3
+  lockin: true
+steps:
+  - name: r_ab_cd
+    state: I_AB_V_CD
+    measure_kind: longitudinal
+    outputs:
+      M1: r_ab_cd_ohm
+    tags: [vdp, ac, direct]
+  - name: r_cd_ab_reciprocal
+    state: I_CD_V_AB
+    measure_kind: longitudinal
+    reciprocal_of: r_ab_cd
+    outputs:
+      M1: r_cd_ab_ohm
+    tags: [vdp, ac, reciprocity]
+  - name: r_bc_da
+    state: I_BC_V_DA
+    measure_kind: longitudinal
+    outputs:
+      M1: r_bc_da_ohm
+    tags: [vdp, ac, direct]
+  - name: r_da_bc_reciprocal
+    state: I_DA_V_BC
+    measure_kind: longitudinal
+    reciprocal_of: r_bc_da
+    outputs:
+      M1: r_da_bc_ohm
+    tags: [vdp, ac, reciprocity]

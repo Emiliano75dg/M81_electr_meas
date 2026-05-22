@@ -43,3 +43,7 @@ class ProtocolConfigError(ElectricalMeasurementsError):
 
 class RunnerInputError(ElectricalMeasurementsError):
     """Raised when CLI or runner inputs are invalid or inconsistent."""
+
+
+class SequenceValidationError(ElectricalMeasurementsError):
+    """Raised when a measurement sequence file is invalid or inconsistent."""

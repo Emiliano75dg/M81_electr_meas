@@ -142,9 +142,37 @@ Supported environment modes:
 
 The package works in terms of logical sample contacts and maps them onto the physical 7709 relay channels.
 
+Use contact maps to answer:
+
+- how the sample contacts are wired
+- which M81 channels are connected
+- which named relay-matrix states exist
+- which states are reciprocal to each other
+
+Use measurement sequences to answer:
+
+- which named states should be measured
+- in which order
+- with which M81 source/measurement settings
+
+This separation means you do not need to duplicate a contact map just to try a different electrical measurement order.
+
 Van der Pauw example: [configs/contact_maps/vdp_4contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/vdp_4contacts_7709.yaml)
 
 Hall bar example: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_7709.yaml)
+
+Sequence examples:
+
+- [configs/sequences/vdp_ac_reciprocity.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_ac_reciprocity.yaml)
+- [configs/sequences/vdp_dc_reverse_bias.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_dc_reverse_bias.yaml)
+- [configs/sequences/hallbar_ac_rxx_rxy.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_ac_rxx_rxy.yaml)
+- [configs/sequences/second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_ac.yaml)
+
+Safety note:
+
+- all relay switching still goes through `Matrix7709.apply_state()`
+- sequence runs never bypass the matrix safety interlock
+- dry-run preview prints the resolved plan without touching hardware
 
 ## Mock mode
 
@@ -158,6 +186,35 @@ electrical-measure run --mock --config configs/instruments.yaml --protocol vdp -
 `vdp_hall` runs a Hall measurement using Van der Pauw states. With `--include-reciprocity`, the sequence also includes reciprocal states and stores reciprocity errors in the derived fields.
 
 In the `vdp` protocol, `--include-anisotropy` adds an anisotropy check between the two orthogonal Van der Pauw families and saves family averages, absolute/relative difference, and ratio in `derived`.
+
+Sequence-mode examples:
+
+```bash
+electrical-measure run \
+  --config configs/instruments.yaml \
+  --contact-map configs/contact_maps/vdp_4contacts_7709.yaml \
+  --sequence configs/sequences/vdp_ac_reciprocity.yaml \
+  --temperatures 300 \
+  --fields -1,0,1 \
+  --environment-mode async-poll
+```
+
+```bash
+electrical-measure run \
+  --config configs/instruments.yaml \
+  --contact-map configs/contact_maps/vdp_4contacts_7709.yaml \
+  --sequence configs/sequences/vdp_ac_reciprocity.yaml \
+  --dry-run
+```
+
+Sequence concepts:
+
+- DC reverse bias is DC-only and uses `bias_polarity: +1/-1` together with `current_a`
+- AC lock-in sequences use `current_rms_a`, `frequency_hz`, and `harmonic`
+- ordinary AC Van der Pauw, Hall, magnetoresistance, and second-harmonic sequences do not need reverse-bias steps
+- reciprocity is a different matrix state with exchanged current and voltage contacts
+- magnetic-field reversal belongs to the outer field loop, not the matrix sequence
+- temperature ramps belong to the outer environment loop, not the matrix sequence
 
 Other useful subcommands:
 

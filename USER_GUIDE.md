@@ -274,6 +274,38 @@ Contact maps define named states such as:
 
 The software uses these definitions to compute actual relay closures.
 
+Contact maps describe the wiring.
+
+- logical sample contacts
+- M81 source and measure channel bindings
+- named relay-matrix states
+- reciprocal relationships between states
+
+Measurement sequences describe the ordered electrical procedure.
+
+- which named states to measure
+- in which order
+- which M81 channels to read
+- which excitation parameters to use
+
+This separation keeps one physical wiring map reusable across multiple measurement orders.
+
+Sequence examples:
+
+- [configs/sequences/vdp_ac_reciprocity.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_ac_reciprocity.yaml)
+- [configs/sequences/vdp_dc_reverse_bias.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_dc_reverse_bias.yaml)
+- [configs/sequences/hallbar_ac_rxx_rxy.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_ac_rxx_rxy.yaml)
+- [configs/sequences/second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_ac.yaml)
+
+Important distinctions:
+
+- DC reverse bias uses `bias_polarity: +1/-1` and changes the sign of the applied DC current
+- AC lock-in excitation does not normally need reverse-bias steps
+- reciprocity means a different matrix state with current and voltage pairs exchanged
+- magnetic-field reversal is handled by the outer field loop
+- temperature sweeps and ramps are handled by the outer environment loop
+- all relay switching still goes through `Matrix7709.apply_state()`
+
 Typical workflow:
 
 1. Choose the sample geometry.
@@ -323,6 +355,27 @@ electrical-measure run \
   --protocol hallbar_mr \
   --temperatures 300 \
   --fields 0,0.1,-0.1
+```
+
+Sequence-mode examples:
+
+```bash
+electrical-measure run \
+  --mock \
+  --config configs/instruments.yaml \
+  --contact-map configs/contact_maps/vdp_4contacts_7709.yaml \
+  --sequence configs/sequences/vdp_ac_reciprocity.yaml \
+  --temperatures 300 \
+  --fields -1,0,1
+```
+
+```bash
+electrical-measure run \
+  --mock \
+  --config configs/instruments.yaml \
+  --contact-map configs/contact_maps/vdp_4contacts_7709.yaml \
+  --sequence configs/sequences/vdp_ac_reciprocity.yaml \
+  --dry-run
 ```
 
 What this does:
@@ -561,6 +614,7 @@ Common run options:
 - `--sample-id`
 - `--output`
 - `--protocol`
+- `--sequence`
 - `--temperatures`
 - `--fields`
 - `--current`
@@ -575,6 +629,8 @@ Multi-state / protocol-specific options:
 - `--selected-states`
 - `--include-reciprocity`
 - `--include-anisotropy`
+
+With `--sequence`, the sequence YAML becomes the measurement-order authority. In sequence mode, do not combine it with `--state-name` or `--selected-states`.
 
 Streaming options:
 

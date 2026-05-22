@@ -1,0 +1,107 @@
+{
+  "driver_versions": {
+    "git_commit": "ff1956c2a107402d20af5bffe488a35b6305be21"
+  },
+  "finished_at": "2026-05-22T15:02:21.716923+00:00",
+  "geometry": "vdp_4contacts_7709",
+  "instruments": {
+    "daq6510": {
+      "enabled": true,
+      "resource": "MOCK::DAQ6510",
+      "settle_s": 0.05
+    },
+    "environment": {
+      "endpoint": "http://localhost:8000",
+      "kind": "mock",
+      "mode": "integrated"
+    },
+    "m81": {
+      "connection": {
+        "kind": "mock"
+      },
+      "enabled": true,
+      "measure_harmonics": {
+        "M1": 1,
+        "M2": 2,
+        "M3": 3
+      },
+      "measure_modes": {
+        "M1": "lockin",
+        "M2": "dc",
+        "M3": "auto"
+      },
+      "measure_nplc": {
+        "M1": 1.0,
+        "M2": 2.0,
+        "M3": 1.0
+      },
+      "measure_rolloffs": {
+        "M1": "R24",
+        "M2": "R12",
+        "M3": "R24"
+      },
+      "measure_time_constants_s": {
+        "M1": 0.3,
+        "M2": 1.0,
+        "M3": 0.3
+      }
+    }
+  },
+  "mapping_contacts": {
+    "A": {
+      "column": 1
+    },
+    "B": {
+      "column": 2
+    },
+    "C": {
+      "column": 3
+    },
+    "D": {
+      "column": 4
+    }
+  },
+  "mapping_relay": {
+    "I_AB_V_CD": [
+      17,
+      26,
+      35,
+      44
+    ],
+    "I_BA_V_CD": [
+      18,
+      25,
+      35,
+      44
+    ],
+    "I_BC_V_DA": [
+      18,
+      27,
+      36,
+      41
+    ],
+    "I_CD_V_AB": [
+      19,
+      28,
+      33,
+      42
+    ],
+    "I_DA_V_BC": [
+      20,
+      25,
+      34,
+      43
+    ],
+    "I_DC_V_AB": [
+      20,
+      27,
+      33,
+      42
+    ]
+  },
+  "notes": "sequence vdp_ac_reciprocity stream-ramp",
+  "sample_id": "demo-sample",
+  "started_at": "2026-05-22T15:02:21.716899+00:00",
+  "user": null,
+  "yaml_file": "configs/contact_maps/vdp_4contacts_7709.yaml"
+}

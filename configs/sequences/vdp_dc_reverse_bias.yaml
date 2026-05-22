@@ -1,0 +1,42 @@
+name: vdp_dc_reverse_bias
+description: DC Van der Pauw sequence with plus/minus current for offset cancellation
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  excitation_mode: dc
+  source: S1
+  measure_channel: M1
+  current_a: 1.0e-5
+  settle_s: 0.2
+  repeats: 1
+  lockin: false
+steps:
+  - name: r_ab_cd_plus
+    state: I_AB_V_CD
+    bias_polarity: 1
+    measure_kind: longitudinal
+    outputs:
+      M1: r_ab_cd_plus_ohm
+    tags: [vdp, dc, plus_bias]
+  - name: r_ab_cd_minus
+    state: I_AB_V_CD
+    bias_polarity: -1
+    measure_kind: longitudinal
+    outputs:
+      M1: r_ab_cd_minus_ohm
+    tags: [vdp, dc, minus_bias]
+  - name: r_cd_ab_plus
+    state: I_CD_V_AB
+    bias_polarity: 1
+    measure_kind: longitudinal
+    reciprocal_of: r_ab_cd_plus
+    outputs:
+      M1: r_cd_ab_plus_ohm
+    tags: [vdp, dc, reciprocity]
+  - name: r_cd_ab_minus
+    state: I_CD_V_AB
+    bias_polarity: -1
+    measure_kind: longitudinal
+    reciprocal_of: r_ab_cd_minus
+    outputs:
+      M1: r_cd_ab_minus_ohm
+    tags: [vdp, dc, reciprocity]

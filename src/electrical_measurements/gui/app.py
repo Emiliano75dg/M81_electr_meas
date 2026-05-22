@@ -8,11 +8,13 @@ from pathlib import Path
 import queue
 import threading
 import time
+import tempfile
 import traceback
 import tkinter as tk
 from tkinter import filedialog, ttk
 
 import pandas as pd
+import yaml
 
 from ..runners.run_measurement import (
     apply_environment_mode_override,
@@ -24,6 +26,12 @@ from ..runners.run_measurement import (
 )
 from ..instruments.teslatron_client import environment_mode_from_config
 from ..protocols.vdp_hall import default_vdp_hall_states
+from ..sequences import (
+    SequenceRunner,
+    measurement_sequence_from_dict,
+    measurement_sequence_to_dict,
+    validate_measurement_sequence,
+)
 from ..switching.contact_map import ContactMap
 
 PROTOCOLS = ["hall", "hallbar_mr", "vdp", "vdp_hall", "second_harmonic", "reciprocity", "check_contacts"]
@@ -36,6 +44,107 @@ MEASURE_ACQUISITION_MODES = ["Auto", "Lock-in", "DC"]
 LOCKIN_ROLLOFFS = ["R6", "R12", "R18", "R24"]
 LIVE_PLOT_X_COLUMNS = ["sample_index", "elapsed_s", "field_t", "temperature_k"]
 LIVE_PLOT_Y_COLUMNS = ["x", "y", "r", "theta_deg", "value", "x_dual", "r_dual"]
+SEQUENCE_EXCITATION_MODES = ["dc", "ac"]
+SEQUENCE_SOURCES = ["", "S1", "S2", "S3"]
+SEQUENCE_MEASURE_CHANNELS = ["", "M1", "M2", "M3"]
+
+
+def empty_sequence_data(contact_map_path: str | None = None) -> dict[str, object]:
+    return {
+        "name": "new_sequence",
+        "description": "",
+        "contact_map": contact_map_path or "",
+        "expert_mode": False,
+        "defaults": {
+            "excitation_mode": "ac",
+            "source": "S1",
+            "measure_channel": "M1",
+            "measure_channels": [],
+            "current_a": None,
+            "current_rms_a": 1.0e-5,
+            "frequency_hz": 13.7,
+            "harmonic": 1,
+            "settle_s": 0.1,
+            "repeats": 1,
+            "lockin": True,
+            "metadata": {},
+        },
+        "steps": [],
+    }
+
+
+def parse_csv_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_csv_mapping(value: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for item in parse_csv_list(value):
+        if ":" not in item:
+            raise ValueError(f"Expected key:value item, got '{item}'")
+        key, mapped = item.split(":", 1)
+        key = key.strip()
+        mapped = mapped.strip()
+        if not key or not mapped:
+            raise ValueError(f"Expected key:value item, got '{item}'")
+        mapping[key] = mapped
+    return mapping
+
+
+def format_outputs_mapping(value: dict[str, str] | None) -> str:
+    if not value:
+        return ""
+    return ",".join(f"{key}:{mapped}" for key, mapped in value.items())
+
+
+def stringify_step_tags(step: dict[str, object]) -> str:
+    tags = step.get("tags", [])
+    return ",".join(tags) if isinstance(tags, list) else ""
+
+
+def relay_channels_for_state(contact_map: ContactMap | None, state_name: str) -> str:
+    if contact_map is None or not state_name or state_name not in contact_map.states:
+        return ""
+    return ",".join(str(channel) for channel in contact_map.get_state(state_name).get("relay_channels", []))
+
+
+def sequence_step_table_row(step: dict[str, object], defaults: dict[str, object], contact_map: ContactMap | None, index: int) -> dict[str, str]:
+    mode = str(step.get("excitation_mode") or defaults.get("excitation_mode") or "")
+    measure_channels = step.get("measure_channels")
+    if not measure_channels:
+        single_channel = step.get("measure_channel") or defaults.get("measure_channel")
+        measure_channels = [single_channel] if single_channel else defaults.get("measure_channels", [])
+    measure_channels = [item for item in measure_channels if item]
+    if mode == "dc":
+        current_a = step.get("current_a")
+        if current_a is None:
+            current_a = defaults.get("current_a")
+        polarity = step.get("bias_polarity", 1)
+        current_text = ""
+        if current_a is not None:
+            current_text = f"{float(current_a) * int(polarity):.6g}"
+    else:
+        current_rms_a = step.get("current_rms_a")
+        if current_rms_a is None:
+            current_rms_a = defaults.get("current_rms_a")
+        current_text = "" if current_rms_a is None else f"{float(current_rms_a):.6g}"
+    return {
+        "index": str(index + 1),
+        "step_name": str(step.get("name", "")),
+        "state_name": str(step.get("state", "")),
+        "excitation_mode": mode,
+        "source": str(step.get("source") or defaults.get("source") or ""),
+        "current": current_text,
+        "frequency_hz": str(step.get("frequency_hz") if step.get("frequency_hz") is not None else defaults.get("frequency_hz") or ""),
+        "harmonic": str(step.get("harmonic") if step.get("harmonic") is not None else defaults.get("harmonic") or ""),
+        "measure_channels": ",".join(measure_channels),
+        "outputs": format_outputs_mapping(step.get("outputs") if isinstance(step.get("outputs"), dict) else None),
+        "settle_s": str(step.get("settle_s") if step.get("settle_s") is not None else defaults.get("settle_s") or ""),
+        "repeats": str(step.get("repeats") if step.get("repeats") is not None else defaults.get("repeats") or ""),
+        "tags": stringify_step_tags(step),
+        "reciprocal_of": str(step.get("reciprocal_of", "")),
+        "relay_channels": relay_channels_for_state(contact_map, str(step.get("state", ""))),
+    }
 
 
 def environment_mode_supports_control(environment_mode: str) -> bool:
@@ -266,6 +375,10 @@ class MeasurementGUI:
         self.live_environment_widgets: list[tk.Widget] = []
         self.include_reciprocity_check: ttk.Checkbutton | None = None
         self.include_anisotropy_check: ttk.Checkbutton | None = None
+        self.sequence_data: dict[str, object] = {}
+        self.sequence_file_path: Path | None = None
+        self.sequence_validation_ok = False
+        self.sequence_step_index: int | None = None
 
         self.config_var = tk.StringVar(value=getattr(initial_args, "config", "configs/instruments.yaml"))
         self.contact_map_var = tk.StringVar(value=getattr(initial_args, "contact_map", "configs/contact_maps/hallbar_6contacts_7709.yaml"))
@@ -313,6 +426,42 @@ class MeasurementGUI:
         self.live_env_field_target_var = tk.StringVar(value="0")
         self.live_env_ramp_rate_var = tk.StringVar(value="60")
         self.status_var = tk.StringVar(value="Ready")
+        self.sequence_path_var = tk.StringVar(value="")
+        self.sequence_name_var = tk.StringVar(value="new_sequence")
+        self.sequence_description_var = tk.StringVar(value="")
+        self.sequence_contact_map_var = tk.StringVar(value=self.contact_map_var.get())
+        self.sequence_expert_mode_var = tk.BooleanVar(value=False)
+        self.sequence_default_mode_var = tk.StringVar(value="ac")
+        self.sequence_default_source_var = tk.StringVar(value="S1")
+        self.sequence_default_measure_channel_var = tk.StringVar(value="M1")
+        self.sequence_default_measure_channels_var = tk.StringVar(value="")
+        self.sequence_default_current_a_var = tk.StringVar(value="")
+        self.sequence_default_current_rms_a_var = tk.StringVar(value="1e-5")
+        self.sequence_default_frequency_var = tk.StringVar(value="13.7")
+        self.sequence_default_harmonic_var = tk.StringVar(value="1")
+        self.sequence_default_settle_var = tk.StringVar(value="0.1")
+        self.sequence_default_repeats_var = tk.StringVar(value="1")
+        self.sequence_default_lockin_var = tk.BooleanVar(value=True)
+        self.sequence_selected_state_var = tk.StringVar(value="")
+        self.sequence_step_name_var = tk.StringVar(value="")
+        self.sequence_step_state_var = tk.StringVar(value="")
+        self.sequence_step_mode_var = tk.StringVar(value="ac")
+        self.sequence_step_source_var = tk.StringVar(value="")
+        self.sequence_step_measure_channel_var = tk.StringVar(value="")
+        self.sequence_step_measure_channels_var = tk.StringVar(value="")
+        self.sequence_step_current_a_var = tk.StringVar(value="")
+        self.sequence_step_current_rms_a_var = tk.StringVar(value="")
+        self.sequence_step_frequency_var = tk.StringVar(value="")
+        self.sequence_step_harmonic_var = tk.StringVar(value="")
+        self.sequence_step_bias_polarity_var = tk.StringVar(value="1")
+        self.sequence_step_settle_var = tk.StringVar(value="")
+        self.sequence_step_repeats_var = tk.StringVar(value="")
+        self.sequence_step_measure_kind_var = tk.StringVar(value="")
+        self.sequence_step_tags_var = tk.StringVar(value="")
+        self.sequence_step_reciprocal_var = tk.StringVar(value="")
+        self.sequence_step_outputs_var = tk.StringVar(value="")
+        self.sequence_step_relay_var = tk.StringVar(value="")
+        self.sequence_validation_var = tk.StringVar(value="Sequence not validated")
         self.live_temperature_var = tk.StringVar(value="T: --")
         self.live_field_var = tk.StringVar(value="B: --")
         self.live_sources_var = tk.StringVar(value="Sources: --")
@@ -325,6 +474,7 @@ class MeasurementGUI:
         self.live_last_reading_var = tk.StringVar(value="Last reading: --")
 
         self._build_layout()
+        self._new_empty_sequence()
         self._sync_environment_mode_from_config()
         self._load_contact_map()
         self._update_mode_state()
@@ -343,17 +493,20 @@ class MeasurementGUI:
 
         self.setup_tab = ttk.Frame(self.notebook, padding=12)
         self.states_tab = ttk.Frame(self.notebook, padding=12)
+        self.sequence_tab = ttk.Frame(self.notebook, padding=12)
         self.live_tab = ttk.Frame(self.notebook, padding=12)
         self.log_tab = ttk.Frame(self.notebook, padding=12)
         self.preview_tab = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(self.setup_tab, text="Setup")
         self.notebook.add(self.states_tab, text="States")
+        self.notebook.add(self.sequence_tab, text="Sequence")
         self.notebook.add(self.live_tab, text="Live")
         self.notebook.add(self.log_tab, text="Log")
         self.notebook.add(self.preview_tab, text="Preview")
 
         self._build_setup_tab()
         self._build_states_tab()
+        self._build_sequence_tab()
         self._build_live_tab()
         self._build_log_tab()
         self._build_preview_tab()
@@ -430,6 +583,176 @@ class MeasurementGUI:
         self.state_details.grid(row=3, column=1, sticky="nsew", padx=(8, 0))
         self.state_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_state_details())
         self.state_listbox.bind("<<ListboxSelect>>", lambda _event: self._update_state_details())
+
+    def _build_sequence_tab(self) -> None:
+        frame = self.sequence_tab
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        top = ttk.Frame(frame)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        top.columnconfigure(1, weight=1)
+        ttk.Label(top, text="Sequence YAML").grid(row=0, column=0, sticky="w")
+        ttk.Entry(top, textvariable=self.sequence_path_var).grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        ttk.Button(top, text="Load Sequence YAML", command=self._load_sequence_yaml).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(top, text="Save Sequence YAML", command=self._save_sequence_yaml).grid(row=0, column=3)
+
+        split = ttk.Panedwindow(frame, orient="horizontal")
+        split.grid(row=1, column=0, sticky="nsew")
+
+        left = ttk.Frame(split, padding=6)
+        center = ttk.Frame(split, padding=6)
+        right = ttk.Frame(split, padding=6)
+        split.add(left, weight=1)
+        split.add(center, weight=3)
+        split.add(right, weight=2)
+
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(3, weight=1)
+        ttk.Label(left, text="Loaded contact map").grid(row=0, column=0, sticky="w")
+        ttk.Label(left, textvariable=self.sequence_contact_map_var).grid(row=1, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(left, text="Available states").grid(row=2, column=0, sticky="w")
+        self.sequence_state_listbox = tk.Listbox(left, exportselection=False, height=18)
+        self.sequence_state_listbox.grid(row=3, column=0, sticky="nsew")
+        self.sequence_state_listbox.bind("<<ListboxSelect>>", lambda _event: self._on_sequence_state_list_select())
+        left_buttons = ttk.Frame(left)
+        left_buttons.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(left_buttons, text="Add State To Sequence", command=self._add_selected_contact_map_state_to_sequence).pack(fill="x")
+        ttk.Button(left_buttons, text="New Empty Sequence", command=self._new_empty_sequence).pack(fill="x", pady=(6, 0))
+
+        center.columnconfigure(0, weight=1)
+        center.rowconfigure(0, weight=1)
+        sequence_columns = (
+            "index",
+            "step_name",
+            "state_name",
+            "excitation_mode",
+            "source",
+            "current",
+            "frequency_hz",
+            "harmonic",
+            "measure_channels",
+            "outputs",
+            "settle_s",
+            "repeats",
+            "tags",
+            "reciprocal_of",
+            "relay_channels",
+        )
+        self.sequence_tree = ttk.Treeview(center, columns=sequence_columns, show="headings", height=16)
+        for column, heading, width in [
+            ("index", "#", 40),
+            ("step_name", "Step", 120),
+            ("state_name", "State", 120),
+            ("excitation_mode", "Mode", 70),
+            ("source", "Source", 60),
+            ("current", "Current", 90),
+            ("frequency_hz", "Freq", 80),
+            ("harmonic", "Harm", 60),
+            ("measure_channels", "Measure", 100),
+            ("outputs", "Outputs", 130),
+            ("settle_s", "Settle", 70),
+            ("repeats", "Repeats", 70),
+            ("tags", "Tags", 120),
+            ("reciprocal_of", "Reciprocal", 100),
+            ("relay_channels", "Relays", 120),
+        ]:
+            self.sequence_tree.heading(column, text=heading)
+            self.sequence_tree.column(column, width=width, anchor="w")
+        self.sequence_tree.grid(row=0, column=0, sticky="nsew")
+        self.sequence_tree.bind("<<TreeviewSelect>>", lambda _event: self._on_sequence_tree_select())
+        tree_scroll = ttk.Scrollbar(center, orient="vertical", command=self.sequence_tree.yview)
+        tree_scroll.grid(row=0, column=1, sticky="ns")
+        self.sequence_tree.configure(yscrollcommand=tree_scroll.set)
+        center_buttons = ttk.Frame(center)
+        center_buttons.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Button(center_buttons, text="Move Up", command=self._move_sequence_step_up).pack(side="left")
+        ttk.Button(center_buttons, text="Move Down", command=self._move_sequence_step_down).pack(side="left", padx=(6, 0))
+        ttk.Button(center_buttons, text="Duplicate", command=self._duplicate_sequence_step).pack(side="left", padx=(6, 0))
+        ttk.Button(center_buttons, text="Remove", command=self._remove_sequence_step).pack(side="left", padx=(6, 0))
+
+        right.columnconfigure(1, weight=1)
+        row = 0
+        ttk.Label(right, text="Sequence name").grid(row=row, column=0, sticky="w")
+        ttk.Entry(right, textvariable=self.sequence_name_var).grid(row=row, column=1, sticky="ew", padx=(8, 0))
+        row += 1
+        ttk.Label(right, text="Description").grid(row=row, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(right, textvariable=self.sequence_description_var).grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        row += 1
+        ttk.Checkbutton(right, text="Expert mode", variable=self.sequence_expert_mode_var).grid(row=row, column=1, sticky="w", pady=(6, 0))
+        row += 1
+        defaults_box = ttk.LabelFrame(right, text="Defaults", padding=8)
+        defaults_box.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        defaults_box.columnconfigure(1, weight=1)
+        self._sequence_add_editor_row(defaults_box, 0, "Mode", self.sequence_default_mode_var, combo=SEQUENCE_EXCITATION_MODES)
+        self._sequence_add_editor_row(defaults_box, 1, "Source", self.sequence_default_source_var, combo=SEQUENCE_SOURCES)
+        self._sequence_add_editor_row(defaults_box, 2, "Measure ch.", self.sequence_default_measure_channel_var, combo=SEQUENCE_MEASURE_CHANNELS)
+        self._sequence_add_editor_row(defaults_box, 3, "Measure chs.", self.sequence_default_measure_channels_var)
+        self._sequence_add_editor_row(defaults_box, 4, "DC current A", self.sequence_default_current_a_var)
+        self._sequence_add_editor_row(defaults_box, 5, "AC current Arms", self.sequence_default_current_rms_a_var)
+        self._sequence_add_editor_row(defaults_box, 6, "Frequency Hz", self.sequence_default_frequency_var)
+        self._sequence_add_editor_row(defaults_box, 7, "Harmonic", self.sequence_default_harmonic_var)
+        self._sequence_add_editor_row(defaults_box, 8, "Settle s", self.sequence_default_settle_var)
+        self._sequence_add_editor_row(defaults_box, 9, "Repeats", self.sequence_default_repeats_var)
+        ttk.Checkbutton(defaults_box, text="Lock-in", variable=self.sequence_default_lockin_var).grid(row=10, column=1, sticky="w", pady=(6, 0))
+        row += 1
+        step_box = ttk.LabelFrame(right, text="Selected Step Editor", padding=8)
+        step_box.grid(row=row, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        step_box.columnconfigure(1, weight=1)
+        self._sequence_add_editor_row(step_box, 0, "Step name", self.sequence_step_name_var)
+        self._sequence_add_editor_row(step_box, 1, "State", self.sequence_step_state_var)
+        self._sequence_add_editor_row(step_box, 2, "Mode", self.sequence_step_mode_var, combo=SEQUENCE_EXCITATION_MODES, callback=lambda _event=None: self._update_sequence_step_mode_fields())
+        self._sequence_add_editor_row(step_box, 3, "Source", self.sequence_step_source_var, combo=SEQUENCE_SOURCES)
+        self._sequence_add_editor_row(step_box, 4, "Measure ch.", self.sequence_step_measure_channel_var, combo=SEQUENCE_MEASURE_CHANNELS)
+        self._sequence_add_editor_row(step_box, 5, "Measure chs.", self.sequence_step_measure_channels_var)
+        self.sequence_step_current_a_entry = self._sequence_add_editor_row(step_box, 6, "DC current A", self.sequence_step_current_a_var)
+        self.sequence_step_current_rms_entry = self._sequence_add_editor_row(step_box, 7, "AC current Arms", self.sequence_step_current_rms_a_var)
+        self.sequence_step_frequency_entry = self._sequence_add_editor_row(step_box, 8, "Frequency Hz", self.sequence_step_frequency_var)
+        self.sequence_step_harmonic_entry = self._sequence_add_editor_row(step_box, 9, "Harmonic", self.sequence_step_harmonic_var)
+        self.sequence_step_bias_entry = self._sequence_add_editor_row(step_box, 10, "Bias polarity", self.sequence_step_bias_polarity_var)
+        self._sequence_add_editor_row(step_box, 11, "Settle s", self.sequence_step_settle_var)
+        self._sequence_add_editor_row(step_box, 12, "Repeats", self.sequence_step_repeats_var)
+        self._sequence_add_editor_row(step_box, 13, "Measure kind", self.sequence_step_measure_kind_var)
+        self._sequence_add_editor_row(step_box, 14, "Tags", self.sequence_step_tags_var)
+        self._sequence_add_editor_row(step_box, 15, "Reciprocal of", self.sequence_step_reciprocal_var)
+        self._sequence_add_editor_row(step_box, 16, "Outputs", self.sequence_step_outputs_var)
+        ttk.Label(step_box, text="Relay channels").grid(row=17, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(step_box, textvariable=self.sequence_step_relay_var).grid(row=17, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        step_buttons = ttk.Frame(step_box)
+        step_buttons.grid(row=18, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(step_buttons, text="Apply Step Changes", command=self._apply_sequence_step_editor).pack(side="left")
+        ttk.Button(step_buttons, text="Validate Sequence", command=self._validate_sequence_from_gui).pack(side="left", padx=(6, 0))
+        ttk.Button(step_buttons, text="Dry-run Preview", command=self._dry_run_sequence_from_gui).pack(side="left", padx=(6, 0))
+        ttk.Button(step_buttons, text="Run Sequence", command=self._run_sequence_from_gui).pack(side="left", padx=(6, 0))
+
+        bottom = ttk.Panedwindow(frame, orient="horizontal")
+        bottom.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        bottom_left = ttk.Frame(bottom, padding=6)
+        bottom_right = ttk.Frame(bottom, padding=6)
+        bottom_left.columnconfigure(0, weight=1)
+        bottom_left.rowconfigure(1, weight=1)
+        bottom_right.columnconfigure(0, weight=1)
+        bottom_right.rowconfigure(1, weight=1)
+        ttk.Label(bottom_left, textvariable=self.sequence_validation_var).grid(row=0, column=0, sticky="w")
+        self.sequence_validation_text = tk.Text(bottom_left, height=10, wrap="word")
+        self.sequence_validation_text.grid(row=1, column=0, sticky="nsew")
+        ttk.Label(bottom_right, text="Dry-run preview").grid(row=0, column=0, sticky="w")
+        self.sequence_preview_text = tk.Text(bottom_right, height=10, wrap="word")
+        self.sequence_preview_text.grid(row=1, column=0, sticky="nsew")
+        bottom.add(bottom_left, weight=1)
+        bottom.add(bottom_right, weight=2)
+
+    def _sequence_add_editor_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, combo: list[str] | None = None, callback=None):
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=3)
+        if combo is None:
+            widget = ttk.Entry(parent, textvariable=variable)
+        else:
+            widget = ttk.Combobox(parent, textvariable=variable, values=combo, state="readonly")
+            if callback:
+                widget.bind("<<ComboboxSelected>>", callback)
+        widget.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=3)
+        return widget
 
     def _build_live_tab(self) -> None:
         frame = self.live_tab
@@ -685,6 +1008,9 @@ class MeasurementGUI:
         self._browse_file(self.contact_map_var)
         self._load_contact_map()
 
+    def _browse_sequence_file(self) -> None:
+        self._browse_file(self.sequence_path_var)
+
     def _sync_environment_mode_from_config(self) -> None:
         try:
             config = load_yaml(self.config_var.get())
@@ -714,12 +1040,372 @@ class MeasurementGUI:
                 self.state_name_var.set(recommended[0])
             self._select_recommended_states()
             self._update_state_details()
+            self.sequence_contact_map_var.set(self.contact_map_var.get())
+            self._refresh_sequence_available_states()
+            self._refresh_sequence_table()
+            self._update_sequence_relay_preview()
             self.log_queue.put(f"Loaded contact map: {self.contact_map.name}\n")
             self.status_var.set(f"Loaded {self.contact_map.name}")
         except Exception as exc:
             self.contact_map = None
             self.log_queue.put(f"Failed to load contact map: {exc}\n")
             self.status_var.set("Contact map error")
+
+    def _refresh_sequence_available_states(self) -> None:
+        if not hasattr(self, "sequence_state_listbox"):
+            return
+        self.sequence_state_listbox.delete(0, "end")
+        if self.contact_map is None:
+            return
+        for state_name in self.contact_map.states:
+            self.sequence_state_listbox.insert("end", state_name)
+        if self.contact_map.states and not self.sequence_selected_state_var.get():
+            self.sequence_selected_state_var.set(next(iter(self.contact_map.states)))
+
+    def _new_empty_sequence(self) -> None:
+        self.sequence_data = empty_sequence_data(self.contact_map_var.get())
+        self.sequence_file_path = None
+        self.sequence_path_var.set("")
+        self.sequence_validation_ok = False
+        self.sequence_step_index = None
+        self._sync_sequence_vars_from_data()
+        if hasattr(self, "sequence_validation_text"):
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", "New empty sequence created.\n")
+        if hasattr(self, "sequence_preview_text"):
+            self.sequence_preview_text.delete("1.0", "end")
+            self.sequence_preview_text.insert("end", "Dry-run preview will appear here.\n")
+
+    def _sync_sequence_vars_from_data(self) -> None:
+        data = self.sequence_data
+        defaults = data.get("defaults", {})
+        self.sequence_name_var.set(str(data.get("name", "")))
+        self.sequence_description_var.set(str(data.get("description", "")))
+        self.sequence_contact_map_var.set(str(data.get("contact_map", self.contact_map_var.get()) or self.contact_map_var.get()))
+        self.sequence_expert_mode_var.set(bool(data.get("expert_mode", False)))
+        self.sequence_default_mode_var.set(str(defaults.get("excitation_mode", "ac")))
+        self.sequence_default_source_var.set(str(defaults.get("source", "S1") or ""))
+        self.sequence_default_measure_channel_var.set(str(defaults.get("measure_channel", "") or ""))
+        self.sequence_default_measure_channels_var.set(",".join(defaults.get("measure_channels", []) or []))
+        self.sequence_default_current_a_var.set("" if defaults.get("current_a") is None else str(defaults.get("current_a")))
+        self.sequence_default_current_rms_a_var.set("" if defaults.get("current_rms_a") is None else str(defaults.get("current_rms_a")))
+        self.sequence_default_frequency_var.set("" if defaults.get("frequency_hz") is None else str(defaults.get("frequency_hz")))
+        self.sequence_default_harmonic_var.set("" if defaults.get("harmonic") is None else str(defaults.get("harmonic")))
+        self.sequence_default_settle_var.set(str(defaults.get("settle_s", 0.0)))
+        self.sequence_default_repeats_var.set(str(defaults.get("repeats", 1)))
+        self.sequence_default_lockin_var.set(bool(defaults.get("lockin", True)))
+        self._refresh_sequence_table()
+        self._load_sequence_step_into_editor(None)
+
+    def _sync_sequence_data_from_vars(self) -> None:
+        defaults: dict[str, object] = {
+            "excitation_mode": self.sequence_default_mode_var.get(),
+            "source": self.sequence_default_source_var.get() or None,
+            "measure_channel": self.sequence_default_measure_channel_var.get() or None,
+            "measure_channels": parse_csv_list(self.sequence_default_measure_channels_var.get()),
+            "current_a": float(self.sequence_default_current_a_var.get()) if self.sequence_default_current_a_var.get().strip() else None,
+            "current_rms_a": float(self.sequence_default_current_rms_a_var.get()) if self.sequence_default_current_rms_a_var.get().strip() else None,
+            "frequency_hz": float(self.sequence_default_frequency_var.get()) if self.sequence_default_frequency_var.get().strip() else None,
+            "harmonic": int(self.sequence_default_harmonic_var.get()) if self.sequence_default_harmonic_var.get().strip() else None,
+            "settle_s": float(self.sequence_default_settle_var.get() or 0.0),
+            "repeats": int(self.sequence_default_repeats_var.get() or 1),
+            "lockin": bool(self.sequence_default_lockin_var.get()),
+            "metadata": {},
+        }
+        if defaults["measure_channels"] == []:
+            defaults["measure_channels"] = None
+        self.sequence_data["name"] = self.sequence_name_var.get().strip() or "sequence"
+        self.sequence_data["description"] = self.sequence_description_var.get().strip()
+        self.sequence_data["contact_map"] = self.sequence_contact_map_var.get().strip() or self.contact_map_var.get()
+        self.sequence_data["expert_mode"] = bool(self.sequence_expert_mode_var.get())
+        self.sequence_data["defaults"] = defaults
+
+    def _refresh_sequence_table(self) -> None:
+        if not hasattr(self, "sequence_tree"):
+            return
+        self.sequence_tree.delete(*self.sequence_tree.get_children())
+        defaults = self.sequence_data.get("defaults", {})
+        for index, step in enumerate(self.sequence_data.get("steps", [])):
+            row = sequence_step_table_row(step, defaults, self.contact_map, index)
+            iid = str(index)
+            self.sequence_tree.insert("", "end", iid=iid, values=tuple(row[key] for key in self.sequence_tree["columns"]))
+
+    def _on_sequence_state_list_select(self) -> None:
+        selection = self.sequence_state_listbox.curselection()
+        if not selection:
+            return
+        self.sequence_selected_state_var.set(self.sequence_state_listbox.get(selection[0]))
+
+    def _add_selected_contact_map_state_to_sequence(self) -> None:
+        if self.contact_map is None:
+            self.status_var.set("Load contact map first")
+            return
+        selection = self.sequence_state_listbox.curselection()
+        if not selection:
+            self.status_var.set("Select a contact-map state first")
+            return
+        state_name = self.sequence_state_listbox.get(selection[0])
+        step = {
+            "name": f"step_{len(self.sequence_data['steps']) + 1}",
+            "state": state_name,
+            "excitation_mode": None,
+            "source": None,
+            "measure_channel": None,
+            "measure_channels": [],
+            "current_a": None,
+            "current_rms_a": None,
+            "frequency_hz": None,
+            "harmonic": None,
+            "bias_polarity": 1,
+            "settle_s": None,
+            "repeats": None,
+            "measure_kind": "",
+            "tags": [],
+            "reciprocal_of": "",
+            "outputs": {},
+            "metadata": {},
+        }
+        self.sequence_data["steps"].append(step)
+        self.sequence_step_index = len(self.sequence_data["steps"]) - 1
+        self._refresh_sequence_table()
+        self._load_sequence_step_into_editor(self.sequence_step_index)
+
+    def _selected_sequence_tree_index(self) -> int | None:
+        if not hasattr(self, "sequence_tree"):
+            return None
+        selection = self.sequence_tree.selection()
+        if not selection:
+            return None
+        return int(selection[0])
+
+    def _on_sequence_tree_select(self) -> None:
+        self.sequence_step_index = self._selected_sequence_tree_index()
+        self._load_sequence_step_into_editor(self.sequence_step_index)
+
+    def _load_sequence_step_into_editor(self, index: int | None) -> None:
+        steps = self.sequence_data.get("steps", [])
+        if index is None or index < 0 or index >= len(steps):
+            self.sequence_step_index = None
+            self.sequence_step_name_var.set("")
+            self.sequence_step_state_var.set("")
+            self.sequence_step_mode_var.set(self.sequence_default_mode_var.get() or "ac")
+            self.sequence_step_source_var.set("")
+            self.sequence_step_measure_channel_var.set("")
+            self.sequence_step_measure_channels_var.set("")
+            self.sequence_step_current_a_var.set("")
+            self.sequence_step_current_rms_a_var.set("")
+            self.sequence_step_frequency_var.set("")
+            self.sequence_step_harmonic_var.set("")
+            self.sequence_step_bias_polarity_var.set("1")
+            self.sequence_step_settle_var.set("")
+            self.sequence_step_repeats_var.set("")
+            self.sequence_step_measure_kind_var.set("")
+            self.sequence_step_tags_var.set("")
+            self.sequence_step_reciprocal_var.set("")
+            self.sequence_step_outputs_var.set("")
+            self.sequence_step_relay_var.set("")
+            self._update_sequence_step_mode_fields()
+            return
+        step = steps[index]
+        self.sequence_step_name_var.set(str(step.get("name", "")))
+        self.sequence_step_state_var.set(str(step.get("state", "")))
+        self.sequence_step_mode_var.set(str(step.get("excitation_mode") or self.sequence_default_mode_var.get() or "ac"))
+        self.sequence_step_source_var.set(str(step.get("source") or ""))
+        self.sequence_step_measure_channel_var.set(str(step.get("measure_channel") or ""))
+        self.sequence_step_measure_channels_var.set(",".join(step.get("measure_channels", []) or []))
+        self.sequence_step_current_a_var.set("" if step.get("current_a") is None else str(step.get("current_a")))
+        self.sequence_step_current_rms_a_var.set("" if step.get("current_rms_a") is None else str(step.get("current_rms_a")))
+        self.sequence_step_frequency_var.set("" if step.get("frequency_hz") is None else str(step.get("frequency_hz")))
+        self.sequence_step_harmonic_var.set("" if step.get("harmonic") is None else str(step.get("harmonic")))
+        self.sequence_step_bias_polarity_var.set(str(step.get("bias_polarity", 1)))
+        self.sequence_step_settle_var.set("" if step.get("settle_s") is None else str(step.get("settle_s")))
+        self.sequence_step_repeats_var.set("" if step.get("repeats") is None else str(step.get("repeats")))
+        self.sequence_step_measure_kind_var.set(str(step.get("measure_kind", "")))
+        self.sequence_step_tags_var.set(",".join(step.get("tags", []) or []))
+        self.sequence_step_reciprocal_var.set(str(step.get("reciprocal_of", "")))
+        self.sequence_step_outputs_var.set(format_outputs_mapping(step.get("outputs") if isinstance(step.get("outputs"), dict) else None))
+        self._update_sequence_relay_preview()
+        self._update_sequence_step_mode_fields()
+
+    def _update_sequence_relay_preview(self) -> None:
+        self.sequence_step_relay_var.set(relay_channels_for_state(self.contact_map, self.sequence_step_state_var.get()))
+
+    def _update_sequence_step_mode_fields(self) -> None:
+        mode = self.sequence_step_mode_var.get().strip().lower() or self.sequence_default_mode_var.get().strip().lower()
+        is_dc = mode == "dc"
+        self.sequence_step_current_a_entry.configure(state="normal" if is_dc else "disabled")
+        self.sequence_step_bias_entry.configure(state="normal" if is_dc else "disabled")
+        self.sequence_step_current_rms_entry.configure(state="disabled" if is_dc else "normal")
+        self.sequence_step_frequency_entry.configure(state="disabled" if is_dc else "normal")
+        self.sequence_step_harmonic_entry.configure(state="disabled" if is_dc else "normal")
+        if not is_dc:
+            self.sequence_step_bias_polarity_var.set("1")
+        self._update_sequence_relay_preview()
+
+    def _apply_sequence_step_editor(self) -> None:
+        if self.sequence_step_index is None:
+            self.status_var.set("Select a sequence step first")
+            return
+        try:
+            mode = self.sequence_step_mode_var.get().strip().lower() or None
+            if mode == "ac" and self.sequence_step_bias_polarity_var.get().strip() not in {"", "1"}:
+                raise ValueError("bias_polarity is not allowed in AC mode")
+            step = self.sequence_data["steps"][self.sequence_step_index]
+            step["name"] = self.sequence_step_name_var.get().strip()
+            step["state"] = self.sequence_step_state_var.get().strip()
+            step["excitation_mode"] = mode
+            step["source"] = self.sequence_step_source_var.get().strip() or None
+            step["measure_channel"] = self.sequence_step_measure_channel_var.get().strip() or None
+            step["measure_channels"] = parse_csv_list(self.sequence_step_measure_channels_var.get())
+            step["current_a"] = float(self.sequence_step_current_a_var.get()) if mode == "dc" and self.sequence_step_current_a_var.get().strip() else None
+            step["current_rms_a"] = float(self.sequence_step_current_rms_a_var.get()) if mode != "dc" and self.sequence_step_current_rms_a_var.get().strip() else None
+            step["frequency_hz"] = float(self.sequence_step_frequency_var.get()) if mode != "dc" and self.sequence_step_frequency_var.get().strip() else None
+            step["harmonic"] = int(self.sequence_step_harmonic_var.get()) if mode != "dc" and self.sequence_step_harmonic_var.get().strip() else None
+            step["bias_polarity"] = int(self.sequence_step_bias_polarity_var.get()) if mode == "dc" and self.sequence_step_bias_polarity_var.get().strip() else None
+            step["settle_s"] = float(self.sequence_step_settle_var.get()) if self.sequence_step_settle_var.get().strip() else None
+            step["repeats"] = int(self.sequence_step_repeats_var.get()) if self.sequence_step_repeats_var.get().strip() else None
+            step["measure_kind"] = self.sequence_step_measure_kind_var.get().strip() or None
+            step["tags"] = parse_csv_list(self.sequence_step_tags_var.get())
+            step["reciprocal_of"] = self.sequence_step_reciprocal_var.get().strip() or None
+            step["outputs"] = parse_csv_mapping(self.sequence_step_outputs_var.get()) if self.sequence_step_outputs_var.get().strip() else {}
+            self._refresh_sequence_table()
+            self._update_sequence_relay_preview()
+            self.sequence_validation_ok = False
+            self.sequence_validation_var.set("Sequence changed; validate again")
+            self.status_var.set("Sequence step updated")
+        except Exception as exc:
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Step update failed: {exc}\n")
+            self.status_var.set("Sequence edit error")
+
+    def _remove_sequence_step(self) -> None:
+        index = self._selected_sequence_tree_index()
+        if index is None:
+            return
+        self.sequence_data["steps"].pop(index)
+        self.sequence_step_index = None
+        self._refresh_sequence_table()
+        self._load_sequence_step_into_editor(None)
+
+    def _duplicate_sequence_step(self) -> None:
+        index = self._selected_sequence_tree_index()
+        if index is None:
+            return
+        step = dict(self.sequence_data["steps"][index])
+        step["name"] = f"{step.get('name', 'step')}_copy"
+        step["tags"] = list(step.get("tags", []) or [])
+        step["measure_channels"] = list(step.get("measure_channels", []) or [])
+        step["outputs"] = dict(step.get("outputs", {}) or {})
+        self.sequence_data["steps"].insert(index + 1, step)
+        self._refresh_sequence_table()
+
+    def _move_sequence_step_up(self) -> None:
+        index = self._selected_sequence_tree_index()
+        if index is None or index == 0:
+            return
+        steps = self.sequence_data["steps"]
+        steps[index - 1], steps[index] = steps[index], steps[index - 1]
+        self._refresh_sequence_table()
+        self.sequence_tree.selection_set(str(index - 1))
+        self._on_sequence_tree_select()
+
+    def _move_sequence_step_down(self) -> None:
+        index = self._selected_sequence_tree_index()
+        steps = self.sequence_data["steps"]
+        if index is None or index >= len(steps) - 1:
+            return
+        steps[index + 1], steps[index] = steps[index], steps[index + 1]
+        self._refresh_sequence_table()
+        self.sequence_tree.selection_set(str(index + 1))
+        self._on_sequence_tree_select()
+
+    def _build_sequence_model_from_gui(self):
+        self._sync_sequence_data_from_vars()
+        model = measurement_sequence_from_dict(self.sequence_data, path=self.sequence_file_path or self.sequence_path_var.get() or None)
+        if self.contact_map is None:
+            raise ValueError("Load a contact map before validating a sequence")
+        resolved = validate_measurement_sequence(model, self.contact_map)
+        return model, resolved
+
+    def _validate_sequence_from_gui(self) -> None:
+        self.sequence_validation_text.delete("1.0", "end")
+        try:
+            model, resolved = self._build_sequence_model_from_gui()
+            self.sequence_validation_ok = True
+            self.sequence_validation_var.set(f"Sequence valid: {len(resolved)} steps")
+            self.sequence_validation_text.insert(
+                "end",
+                f"Sequence '{model.name}' is valid.\nRelay switching preview remains on Matrix7709.apply_state().\n",
+            )
+        except Exception as exc:
+            self.sequence_validation_ok = False
+            self.sequence_validation_var.set("Sequence validation failed")
+            self.sequence_validation_text.insert("end", f"{exc}\n")
+
+    def _dry_run_sequence_from_gui(self) -> None:
+        self.sequence_preview_text.delete("1.0", "end")
+        try:
+            model, resolved = self._build_sequence_model_from_gui()
+            runner = SequenceRunner(sequence=model, contact_map=self.contact_map, resolved_steps=resolved, dry_run=True)
+            preview = runner.format_preview()
+            self.sequence_preview_text.insert(
+                "end",
+                "Dry-run only. Actual relay switching still uses Matrix7709.apply_state().\n\n",
+            )
+            self.sequence_preview_text.insert("end", preview)
+            self.sequence_validation_ok = True
+            self.sequence_validation_var.set(f"Dry-run ready: {len(resolved)} steps")
+        except Exception as exc:
+            self.sequence_validation_ok = False
+            self.sequence_validation_var.set("Dry-run failed")
+            self.sequence_preview_text.insert("end", f"{exc}\n")
+
+    def _load_sequence_yaml(self) -> None:
+        if not self.sequence_path_var.get():
+            self._browse_sequence_file()
+        path = self.sequence_path_var.get().strip()
+        if not path:
+            return
+        try:
+            payload = yaml.safe_load(Path(path).read_text())
+            model = measurement_sequence_from_dict(payload, path=path)
+            self.sequence_data = measurement_sequence_to_dict(model)
+            self.sequence_file_path = Path(path)
+            self.sequence_path_var.set(path)
+            self.sequence_validation_ok = False
+            self._sync_sequence_vars_from_data()
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Loaded sequence: {model.name}\n")
+            self.status_var.set("Sequence loaded")
+        except Exception as exc:
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Failed to load sequence: {exc}\n")
+            self.status_var.set("Sequence load failed")
+
+    def _save_sequence_yaml(self) -> None:
+        try:
+            self._sync_sequence_data_from_vars()
+            path = self.sequence_path_var.get().strip()
+            if not path:
+                current = Path(self.contact_map_var.get()).parent.parent / "sequences"
+                filename = filedialog.asksaveasfilename(
+                    initialdir=str(current if current.exists() else Path.cwd()),
+                    defaultextension=".yaml",
+                    filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")],
+                )
+                if not filename:
+                    return
+                path = filename
+                self.sequence_path_var.set(path)
+            Path(path).write_text(yaml.safe_dump(self.sequence_data, sort_keys=False))
+            self.sequence_file_path = Path(path)
+            self.status_var.set("Sequence saved")
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Saved sequence YAML to {path}\n")
+        except Exception as exc:
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Failed to save sequence: {exc}\n")
+            self.status_var.set("Sequence save failed")
 
     def _selected_states_from_listbox(self) -> list[str]:
         return [self.state_listbox.get(index) for index in self.state_listbox.curselection()]
@@ -925,6 +1611,35 @@ class MeasurementGUI:
             include_anisotropy=self.include_anisotropy_var.get(),
         )
 
+    def _build_sequence_args(self, sequence_path: str) -> argparse.Namespace:
+        return build_run_namespace(
+            config=self.config_var.get(),
+            contact_map=self.contact_map_var.get(),
+            mock=self.mock_var.get(),
+            sample_id=self.sample_id_var.get() or None,
+            output=self.output_var.get() or None,
+            protocol=None,
+            temperatures=self.temperatures_var.get() or None,
+            fields=self.fields_var.get() or None,
+            current=1e-5,
+            frequency=13.7,
+            harmonic=1,
+            settle=parse_required_float(self.settle_var.get(), "Settle", non_negative=True),
+            mode=self.mode_var.get(),
+            ramp_quantity=self.ramp_quantity_var.get(),
+            ramp_target=parse_required_float(self.ramp_target_var.get(), "Ramp target") if self.ramp_target_var.get() else None,
+            ramp_rate=parse_required_float(self.ramp_rate_var.get(), "Ramp rate", positive=True) if self.ramp_rate_var.get() else None,
+            stream_samples=parse_required_int(self.stream_samples_var.get(), "Stream samples", minimum=1),
+            stream_interval=parse_required_float(self.stream_interval_var.get(), "Stream interval", positive=True),
+            dry_run=self.dry_run_var.get(),
+            state_name=None,
+            selected_states=None,
+            environment_mode=self.environment_mode_var.get(),
+            include_reciprocity=False,
+            include_anisotropy=False,
+            sequence=sequence_path,
+        )
+
     def _run_measurement(self) -> None:
         if self.worker and self.worker.is_alive():
             self.status_var.set("Measurement already running")
@@ -954,6 +1669,48 @@ class MeasurementGUI:
                 self.log_queue.put(buffer.getvalue())
                 self.log_queue.put(traceback.format_exc())
                 self.status_var.set("Failed")
+
+        self.worker = threading.Thread(target=target, daemon=True)
+        self.worker.start()
+
+    def _run_sequence_from_gui(self) -> None:
+        if self.worker and self.worker.is_alive():
+            self.status_var.set("Measurement already running")
+            return
+        try:
+            model, _resolved = self._build_sequence_model_from_gui()
+        except Exception as exc:
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Cannot run sequence: {exc}\n")
+            self.status_var.set("Sequence invalid")
+            return
+        if not self.sequence_validation_ok:
+            self.sequence_validation_text.insert("end", "Validate the sequence before running.\n")
+            self.status_var.set("Validate sequence first")
+            return
+        temporary_dir = Path(tempfile.mkdtemp(prefix="electrical-sequence-gui-"))
+        temporary_path = temporary_dir / f"{model.name or 'sequence'}.yaml"
+        temporary_path.write_text(yaml.safe_dump(measurement_sequence_to_dict(model), sort_keys=False))
+        args = self._build_sequence_args(str(temporary_path))
+
+        def target() -> None:
+            buffer = io.StringIO()
+            try:
+                self.log_queue.put("Starting GUI sequence run...\n")
+                self.status_var.set("Sequence running")
+                with redirect_stdout(buffer), redirect_stderr(buffer):
+                    exit_code = run_command(args)
+                output = buffer.getvalue()
+                if output:
+                    self.log_queue.put(output)
+                self.log_queue.put(f"Sequence finished with exit code {exit_code}\n")
+                self.status_var.set("Sequence completed")
+                self.root.after(0, self._refresh_preview)
+                self.root.after(0, lambda: self.notebook.select(self.preview_tab))
+            except Exception:
+                self.log_queue.put(buffer.getvalue())
+                self.log_queue.put(traceback.format_exc())
+                self.status_var.set("Sequence failed")
 
         self.worker = threading.Thread(target=target, daemon=True)
         self.worker.start()

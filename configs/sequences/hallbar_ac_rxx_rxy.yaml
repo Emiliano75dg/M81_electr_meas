@@ -1,0 +1,28 @@
+name: hallbar_ac_rxx_rxy
+description: AC Hall-bar sequence reading longitudinal and transverse channels
+contact_map: configs/contact_maps/hallbar_6contacts_7709.yaml
+defaults:
+  excitation_mode: ac
+  source: S1
+  measure_channels: [M1, M2]
+  current_rms_a: 1.0e-5
+  frequency_hz: 13.7
+  harmonic: 1
+  settle_s: 0.1
+  repeats: 3
+  lockin: true
+steps:
+  - name: forward_rxx_rxy
+    state: hallbar_forward
+    outputs:
+      M1: rxx_ohm
+      M2: rxy_ohm
+    measure_kind: hallbar
+    tags: [hallbar, ac, forward]
+  - name: reciprocal_check
+    state: hallbar_reciprocal
+    measure_channel: M1
+    outputs:
+      M1: reciprocity_voltage
+    measure_kind: reciprocity
+    tags: [hallbar, ac, reciprocity]

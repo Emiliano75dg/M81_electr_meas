@@ -1,0 +1,20 @@
+name: second_harmonic_ac
+description: AC second-harmonic sequence without reverse-bias steps
+contact_map: configs/contact_maps/second_harmonic_7709.yaml
+defaults:
+  excitation_mode: ac
+  source: S1
+  measure_channel: M2
+  current_rms_a: 1.0e-5
+  frequency_hz: 13.7
+  harmonic: 2
+  settle_s: 0.1
+  repeats: 3
+  lockin: true
+steps:
+  - name: second_harmonic_vxy
+    state: second_harmonic_vxy
+    outputs:
+      M2: second_harmonic_voltage
+    measure_kind: second_harmonic
+    tags: [second_harmonic, ac, lockin]

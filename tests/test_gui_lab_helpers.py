@@ -7,10 +7,12 @@ from electrical_measurements.gui.app import (
     backend_measure_mode_to_ui,
     build_live_record,
     compute_plot_points,
+    empty_sequence_data,
     environment_mode_supports_control,
     format_measure_summary,
     hallbar_live_channels,
     latest_csv_files,
+    parse_csv_mapping,
     parse_required_float,
     parse_required_int,
     parse_optional_positive_int,
@@ -19,6 +21,8 @@ from electrical_measurements.gui.app import (
     preview_csv_text,
     protocol_is_multi_state,
     recommended_states_for_protocol,
+    relay_channels_for_state,
+    sequence_step_table_row,
     ui_measure_mode_to_backend,
 )
 from electrical_measurements.switching.contact_map import ContactMap
@@ -129,6 +133,33 @@ def test_format_measure_summary_renders_modes_and_harmonics():
         }
     )
     assert summary == "Measures: M1: DC | M2: lock-in @ 3f | M3: auto"
+
+
+def test_empty_sequence_data_keeps_contact_map_reference():
+    sequence = empty_sequence_data("configs/contact_maps/vdp_4contacts_7709.yaml")
+    assert sequence["contact_map"] == "configs/contact_maps/vdp_4contacts_7709.yaml"
+    assert sequence["defaults"]["excitation_mode"] == "ac"
+    assert sequence["steps"] == []
+
+
+def test_parse_csv_mapping_parses_outputs():
+    mapping = parse_csv_mapping("M1:rxx,M2:rxy")
+    assert mapping == {"M1": "rxx", "M2": "rxy"}
+
+
+def test_sequence_step_table_row_formats_dc_current_and_relays():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    defaults = {"excitation_mode": "dc", "source": "S1", "measure_channel": "M1", "current_a": 1e-5, "settle_s": 0.1, "repeats": 1}
+    step = {"name": "plus", "state": "I_AB_V_CD", "bias_polarity": -1, "outputs": {"M1": "rxx"}, "tags": ["dc"]}
+    row = sequence_step_table_row(step, defaults, contact_map, 0)
+    assert row["current"] == "-1e-05"
+    assert row["relay_channels"] == "17,26,35,44"
+    assert row["outputs"] == "M1:rxx"
+
+
+def test_relay_channels_for_state_returns_empty_when_missing():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    assert relay_channels_for_state(contact_map, "missing") == ""
 
 
 def test_parse_required_float_and_int_raise_useful_errors():
