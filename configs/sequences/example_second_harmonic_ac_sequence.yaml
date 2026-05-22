@@ -1,0 +1,26 @@
+sequence:
+  name: second_harmonic_basic
+  description: AC second-harmonic example without automatic reverse bias.
+  contact_map: configs/contact_maps/second_harmonic_7709.yaml
+  defaults:
+    source_mode: ac
+    source_quantity: current
+    source: S1
+    source_channel: S1
+    measure_channel: M2
+    source_value: 1.0e-6
+    frequency_hz: 13.7
+    measure_mode: lockin
+    harmonic: 2
+    readout: r
+    settle_s: 1.0
+    repeats: 5
+    reverse_policy: auto
+  steps:
+    - name: V2omega
+      state: second_harmonic_vxy
+      outputs:
+        M2:
+          name: r2w_ohm
+          transform: lockin_r_over_current
+      notes: AC reverse bias stays disabled; lock-in phase already carries the sign information.

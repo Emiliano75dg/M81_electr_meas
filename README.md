@@ -167,6 +167,8 @@ Sequence examples:
 - [configs/sequences/vdp_dc_reverse_bias.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_dc_reverse_bias.yaml)
 - [configs/sequences/hallbar_ac_rxx_rxy.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_ac_rxx_rxy.yaml)
 - [configs/sequences/second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_ac.yaml)
+- [configs/sequences/example_hallbar_dc_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_hallbar_dc_sequence.yaml)
+- [configs/sequences/example_second_harmonic_ac_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_second_harmonic_ac_sequence.yaml)
 
 Safety note:
 
@@ -211,12 +213,15 @@ electrical-measure run \
 
 Sequence concepts:
 
-- DC reverse bias is DC-only and uses `bias_polarity: +1/-1` together with `current_a`
-- AC lock-in sequences use `current_rms_a`, `frequency_hz`, and `harmonic`
+- Sequence files now use an explicit `MeasurementSequence` model with `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, and `reverse_policy`
+- DC reverse bias is DC-only and is resolved by source inversion on the same matrix state with `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
+- AC lock-in sequences use `source_mode: ac`, `frequency_hz`, and `harmonic`; `reverse_policy: auto` intentionally resolves to a single measurement
 - ordinary AC Van der Pauw, Hall, magnetoresistance, and second-harmonic sequences do not need reverse-bias steps
+- `reverse_current` contact-map relations are no longer used as automatic reverse bias; keep them only for explicit diagnostic states
 - reciprocity is a different matrix state with exchanged current and voltage contacts
 - magnetic-field reversal belongs to the outer field loop, not the matrix sequence
 - temperature ramps belong to the outer environment loop, not the matrix sequence
+- for Teslatron or LabVIEW driven ramps, prefer `stream-observe`; the environment stays read-only unless `allow_control: true` and `mode: integrated` are both enabled
 
 Other useful subcommands:
 
@@ -252,6 +257,7 @@ From the GUI you can:
 - start continuous live acquisition with a circular buffer and a real-time plot directly from the `Live` tab
 - with a Hall bar equipped with `vxx_meter` and `vxy_meter`, acquire both live channels and overlay them in the plot with `x_dual` or `r_dual`
 - draw quick plots directly in the GUI by choosing `X/Y` columns from a CSV
+- use the dedicated `Sequence` tab to load/save YAML or JSON sequences, inspect resolved relays and bias policy, validate, dry-run, reorder steps, and launch the same shared sequence runner used by the CLI
 
 ## Streaming During Ramps
 
@@ -290,9 +296,9 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
-`stream-ramp` is preserved for explicit control mode only. When using a Teslatron backend, enable it with `allow_control: true`.
+`stream-ramp` is preserved for explicit control mode only. When using a Teslatron backend, enable it with `allow_control: true`. The runner now checks control capability before any relay closure, trace setup, source enable, or acquisition start.
 
-The resulting dataset stores `trace_index`, `trace_channel`, `field_t`, `temperature_k`, and `environment_timestamp` to synchronize the M81 trace with the environment backend.
+The resulting dataset stores `trace_index`, `trace_channel`, `field_t`, `temperature_k`, `environment_timestamp`, and per-step sequence metadata such as `sequence_id`, `step_index`, `state_name`, `source_mode`, `source_value`, `source_polarity`, `timestamp_matrix_applied`, `timestamp_measure_start`, and `timestamp_measure_end`.
 
 ## Notifications
 

@@ -1,0 +1,27 @@
+sequence:
+  name: hallbar_dc_basic
+  description: DC Hall-bar example using source inversion for reverse bias without changing matrix relays.
+  contact_map: configs/contact_maps/hallbar_6contacts_7709.yaml
+  defaults:
+    source_mode: dc
+    source_quantity: current
+    source: S1
+    source_channel: S1
+    measure_channels: [M1, M2]
+    source_value: 1.0e-6
+    measure_mode: dc
+    readout: value
+    settle_s: 0.2
+    repeats: 3
+    reverse_policy: auto
+  steps:
+    - name: Vxx_dc
+      state: hallbar_forward
+      outputs:
+        M1:
+          name: rxx_ohm
+          transform: voltage_over_current
+        M2:
+          name: rxy_ohm
+          transform: voltage_over_current
+      notes: Reverse bias is resolved by source inversion only.

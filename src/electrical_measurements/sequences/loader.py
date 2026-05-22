@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,24 +11,42 @@ from .schema import MeasurementSequence, SequenceDefaults, SequenceStep
 
 TOP_LEVEL_FIELDS = {"name", "description", "contact_map", "defaults", "steps", "expert_mode"}
 DEFAULT_FIELDS = {
+    "source_mode",
+    "source_quantity",
+    "source_value",
     "excitation_mode",
     "source",
+    "source_channel",
     "measure_channel",
     "measure_channels",
     "current_a",
     "current_rms_a",
     "frequency_hz",
     "harmonic",
+    "measure_mode",
+    "readout",
+    "time_constant_s",
+    "nplc",
+    "rolloff",
     "settle_s",
     "repeats",
+    "reverse_policy",
+    "notes",
     "lockin",
     "metadata",
 }
 STEP_FIELDS = {
+    "enabled",
+    "order",
     "name",
+    "label",
     "state",
+    "source_mode",
+    "source_quantity",
+    "source_value",
     "excitation_mode",
     "source",
+    "source_channel",
     "measure_channel",
     "measure_channels",
     "current_a",
@@ -37,11 +56,20 @@ STEP_FIELDS = {
     "bias_polarity",
     "settle_s",
     "repeats",
+    "measure_mode",
+    "readout",
+    "time_constant_s",
+    "nplc",
+    "rolloff",
+    "reverse_policy",
+    "diagnostic_state",
     "measure_kind",
     "tags",
+    "reciprocity_partner",
     "reciprocal_step_of",
     "reciprocal_of",
     "outputs",
+    "notes",
     "metadata",
 }
 
@@ -85,17 +113,29 @@ def _as_optional_metadata(value: Any, context: str) -> dict[str, Any] | None:
 def _load_defaults(data: Any) -> SequenceDefaults:
     payload = _require_mapping(data, "defaults")
     _reject_unknown_fields(payload, DEFAULT_FIELDS, "defaults")
+    source_mode = payload.get("source_mode", payload.get("excitation_mode"))
+    source_channel = payload.get("source_channel", payload.get("source"))
     return SequenceDefaults(
-        excitation_mode=str(payload.get("excitation_mode")),
+        source_mode=str(source_mode),
+        source_quantity=str(payload.get("source_quantity", "current")),
+        source_value=payload.get("source_value"),
         source=payload.get("source"),
+        source_channel=source_channel,
         measure_channel=payload.get("measure_channel"),
         measure_channels=_as_optional_str_list(payload.get("measure_channels"), "defaults.measure_channels"),
         current_a=payload.get("current_a"),
         current_rms_a=payload.get("current_rms_a"),
         frequency_hz=payload.get("frequency_hz"),
         harmonic=payload.get("harmonic"),
+        measure_mode=payload.get("measure_mode"),
+        readout=payload.get("readout"),
+        time_constant_s=payload.get("time_constant_s"),
+        nplc=payload.get("nplc"),
+        rolloff=payload.get("rolloff"),
         settle_s=float(payload.get("settle_s", 0.0)),
         repeats=int(payload.get("repeats", 1)),
+        reverse_policy=str(payload.get("reverse_policy", "none")),
+        notes=payload.get("notes"),
         lockin=payload.get("lockin"),
         metadata=_as_optional_metadata(payload.get("metadata"), "defaults.metadata"),
     )
@@ -104,11 +144,20 @@ def _load_defaults(data: Any) -> SequenceDefaults:
 def _load_step(index: int, data: Any) -> SequenceStep:
     payload = _require_mapping(data, f"steps[{index}]")
     _reject_unknown_fields(payload, STEP_FIELDS, f"steps[{index}]")
+    source_mode = payload.get("source_mode", payload.get("excitation_mode"))
+    source_channel = payload.get("source_channel", payload.get("source"))
     return SequenceStep(
+        enabled=bool(payload.get("enabled", True)),
+        order=payload.get("order"),
         name=str(payload.get("name")),
         state=str(payload.get("state")),
+        label=payload.get("label"),
+        source_mode=source_mode,
+        source_quantity=payload.get("source_quantity"),
+        source_value=payload.get("source_value"),
         excitation_mode=payload.get("excitation_mode"),
         source=payload.get("source"),
+        source_channel=source_channel,
         measure_channel=payload.get("measure_channel"),
         measure_channels=_as_optional_str_list(payload.get("measure_channels"), f"steps[{index}].measure_channels"),
         current_a=payload.get("current_a"),
@@ -118,17 +167,27 @@ def _load_step(index: int, data: Any) -> SequenceStep:
         bias_polarity=payload.get("bias_polarity"),
         settle_s=payload.get("settle_s"),
         repeats=payload.get("repeats"),
+        measure_mode=payload.get("measure_mode"),
+        readout=payload.get("readout"),
+        time_constant_s=payload.get("time_constant_s"),
+        nplc=payload.get("nplc"),
+        rolloff=payload.get("rolloff"),
+        reverse_policy=payload.get("reverse_policy"),
+        diagnostic_state=payload.get("diagnostic_state"),
         measure_kind=payload.get("measure_kind"),
         tags=_as_optional_str_list(payload.get("tags"), f"steps[{index}].tags"),
+        reciprocity_partner=payload.get("reciprocity_partner"),
         reciprocal_step_of=payload.get("reciprocal_step_of"),
         reciprocal_of=payload.get("reciprocal_of"),
         outputs=_as_optional_outputs(payload.get("outputs"), f"steps[{index}].outputs"),
+        notes=payload.get("notes"),
         metadata=_as_optional_metadata(payload.get("metadata"), f"steps[{index}].metadata"),
     )
 
 
 def measurement_sequence_from_dict(data: dict[str, Any], *, path: str | Path | None = None) -> MeasurementSequence:
-    payload = _require_mapping(data, "sequence")
+    raw_payload = data.get("sequence") if isinstance(data, dict) and "sequence" in data else data
+    payload = _require_mapping(raw_payload, "sequence")
     _reject_unknown_fields(payload, TOP_LEVEL_FIELDS, "sequence")
     if "name" not in payload:
         raise SequenceValidationError("Sequence must define name")
@@ -159,9 +218,11 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
     data: dict[str, Any] = {
         "name": sequence.name,
         "defaults": {
-            "excitation_mode": sequence.defaults.excitation_mode,
+            "source_mode": sequence.defaults.source_mode,
+            "source_quantity": sequence.defaults.source_quantity,
             "settle_s": sequence.defaults.settle_s,
             "repeats": sequence.defaults.repeats,
+            "reverse_policy": sequence.defaults.reverse_policy,
         },
         "steps": [],
     }
@@ -172,13 +233,21 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
     if sequence.expert_mode:
         data["expert_mode"] = True
     optional_defaults = {
+        "source_value": sequence.defaults.source_value,
         "source": sequence.defaults.source,
+        "source_channel": sequence.defaults.source_channel,
         "measure_channel": sequence.defaults.measure_channel,
         "measure_channels": sequence.defaults.measure_channels,
         "current_a": sequence.defaults.current_a,
         "current_rms_a": sequence.defaults.current_rms_a,
         "frequency_hz": sequence.defaults.frequency_hz,
         "harmonic": sequence.defaults.harmonic,
+        "measure_mode": sequence.defaults.measure_mode,
+        "readout": sequence.defaults.readout,
+        "time_constant_s": sequence.defaults.time_constant_s,
+        "nplc": sequence.defaults.nplc,
+        "rolloff": sequence.defaults.rolloff,
+        "notes": sequence.defaults.notes,
         "lockin": sequence.defaults.lockin,
         "metadata": sequence.defaults.metadata,
     }
@@ -186,10 +255,20 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
         if value is not None:
             data["defaults"][key] = value
     for step in sequence.steps:
-        step_data: dict[str, Any] = {"name": step.name, "state": step.state}
+        step_data: dict[str, Any] = {
+            "name": step.name,
+            "state": step.state,
+            "enabled": step.enabled,
+        }
         optional_step_fields = {
+            "order": step.order,
+            "label": step.label,
+            "source_mode": step.source_mode or step.excitation_mode,
+            "source_quantity": step.source_quantity,
+            "source_value": step.source_value,
             "excitation_mode": step.excitation_mode,
             "source": step.source,
+            "source_channel": step.source_channel,
             "measure_channel": step.measure_channel,
             "measure_channels": step.measure_channels,
             "current_a": step.current_a,
@@ -199,11 +278,20 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
             "bias_polarity": step.bias_polarity,
             "settle_s": step.settle_s,
             "repeats": step.repeats,
+            "measure_mode": step.measure_mode,
+            "readout": step.readout,
+            "time_constant_s": step.time_constant_s,
+            "nplc": step.nplc,
+            "rolloff": step.rolloff,
+            "reverse_policy": step.reverse_policy,
+            "diagnostic_state": step.diagnostic_state,
             "measure_kind": step.measure_kind,
             "tags": step.tags,
+            "reciprocity_partner": step.reciprocity_partner,
             "reciprocal_step_of": step.reciprocal_step_of,
             "reciprocal_of": step.reciprocal_of,
             "outputs": step.outputs,
+            "notes": step.notes,
             "metadata": step.metadata,
         }
         for key, value in optional_step_fields.items():
@@ -214,6 +302,20 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
 
 
 def load_measurement_sequence(path: str | Path) -> MeasurementSequence:
-    yaml_path = Path(path)
-    data = yaml.safe_load(yaml_path.read_text())
-    return measurement_sequence_from_dict(data, path=yaml_path)
+    sequence_path = Path(path)
+    text = sequence_path.read_text()
+    if sequence_path.suffix.lower() == ".json":
+        data = json.loads(text)
+    else:
+        data = yaml.safe_load(text)
+    return measurement_sequence_from_dict(data, path=sequence_path)
+
+
+def save_measurement_sequence(sequence: MeasurementSequence, path: str | Path) -> Path:
+    sequence_path = Path(path)
+    payload = measurement_sequence_to_dict(sequence)
+    if sequence_path.suffix.lower() == ".json":
+        sequence_path.write_text(json.dumps(payload, indent=2))
+    else:
+        sequence_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    return sequence_path

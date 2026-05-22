@@ -1,7 +1,10 @@
 import argparse
 
+import pytest
+
 from electrical_measurements.instruments.mock import MockEnvironmentController, MockM81Controller
 from electrical_measurements.instruments.teslatron_client import ReadOnlyEnvironmentController, TeslatronClient
+from electrical_measurements.exceptions import RunnerInputError
 from electrical_measurements.protocols.magnetoresistance import MagnetoresistanceProtocol
 from electrical_measurements.runners.run_measurement import run_stream_observe_command, run_stream_ramp_command, synchronize_trace_and_environment
 from electrical_measurements.switching.contact_map import ContactMap
@@ -78,6 +81,31 @@ class RecordingTeslatronClient(TeslatronClient):
         return {"ok": True}
 
 
+class TrackingM81(MockM81Controller):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.configure_trace_calls = 0
+        self.enable_source_calls = 0
+
+    def configure_trace_stream(self, channel: str, points: int, interval_s: float) -> None:
+        self.configure_trace_calls += 1
+        super().configure_trace_stream(channel, points, interval_s)
+
+    def enable_source(self, source: str) -> None:
+        self.enable_source_calls += 1
+        super().enable_source(source)
+
+
+class TrackingMatrix(Matrix7709):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.apply_state_calls = 0
+
+    def apply_state(self, state_name: str):
+        self.apply_state_calls += 1
+        return super().apply_state(state_name)
+
+
 def test_stream_observe_only_reads_environment_state(tmp_path):
     config = {
         "sample_id": "sample",
@@ -121,3 +149,48 @@ def test_stream_observe_only_reads_environment_state(tmp_path):
     assert (tmp_path / "hallbar_mr_stream.csv").exists()
     assert all(method == "GET" for _, method, _ in backend.requests)
     assert all(path == "/state" for path, _, _ in backend.requests)
+
+
+def test_stream_ramp_fails_before_touching_hardware_when_environment_is_read_only(tmp_path):
+    config = {
+        "sample_id": "sample",
+        "instruments": {
+            "daq6510": {"resource": "MOCK::DAQ6510"},
+            "m81": {"connection": {"kind": "mock"}},
+            "environment": {"kind": "teslatron", "mode": "async-poll", "allow_control": False},
+        },
+        "output": {"directory": str(tmp_path)},
+    }
+    contact_map = ContactMap.from_yaml("configs/contact_maps/hallbar_6contacts_7709.yaml")
+    m81 = TrackingM81()
+    matrix = TrackingMatrix.from_config(config, contact_map=contact_map, m81=m81)
+    backend = RecordingTeslatronClient()
+    environment = ReadOnlyEnvironmentController(backend=backend, mode="async-poll")
+    protocol = MagnetoresistanceProtocol(
+        m81=m81,
+        matrix=matrix,
+        contact_map=contact_map,
+        sample_id="sample",
+        state="hallbar_forward",
+        current_rms_a=10e-6,
+        frequency_hz=13.7,
+        settle_s=0.0,
+    )
+    args = argparse.Namespace(
+        temperatures="300",
+        fields="0",
+        stream_samples=2,
+        stream_interval=0.01,
+        ramp_target=1.0,
+        ramp_rate=60.0,
+        ramp_quantity="field",
+        output=str(tmp_path),
+        protocol="hallbar_mr",
+    )
+
+    with pytest.raises(RunnerInputError, match="control enabled"):
+        run_stream_ramp_command(args, config, contact_map, m81, matrix, environment, protocol)
+
+    assert m81.enable_source_calls == 0
+    assert m81.configure_trace_calls == 0
+    assert matrix.apply_state_calls == 0

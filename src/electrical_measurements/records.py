@@ -125,6 +125,7 @@ class MeasurementRecordBuilder:
             "temperature_k": temperature_k,
             "field_t": field_t,
             "bias_polarity": bias_polarity,
+            "source_mode": excitation_mode,
             "source_current_a_dc": dc_current_a,
             "source_current_a_rms": ac_current_rms_a,
             "source_current_a_peak": None if ac_current_rms_a is None else ac_current_rms_a * 2**0.5,

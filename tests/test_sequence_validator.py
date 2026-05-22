@@ -3,7 +3,7 @@ import yaml
 
 from electrical_measurements.capabilities import InstrumentCapabilities
 from electrical_measurements.exceptions import SequenceValidationError
-from electrical_measurements.sequences import load_measurement_sequence, validate_measurement_sequence
+from electrical_measurements.sequences import load_measurement_sequence, resolve_bias_points, validate_measurement_sequence
 from electrical_measurements.switching.contact_map import ContactMap
 
 
@@ -76,6 +76,67 @@ def test_accept_dc_bias_polarity_plus_and_minus():
     sequence = load_measurement_sequence("configs/sequences/vdp_dc_reverse_bias.yaml")
     resolved = validate_measurement_sequence(sequence, contact_map)
     assert {step.bias_polarity for step in resolved[:2]} == {1, -1}
+
+
+def test_dc_auto_reverse_generates_two_bias_points(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {"source_mode": "dc", "source": "S1", "measure_channel": "M1", "source_quantity": "current", "source_value": 1e-5, "reverse_policy": "auto"},
+            "steps": [{"name": "ok", "state": "I_AB_V_CD"}],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    bias_points = resolve_bias_points(resolved[0])
+    assert [point.source_value for point in bias_points] == [1e-05, -1e-05]
+    assert len({point.state for point in bias_points}) == 1
+
+
+def test_ac_auto_reverse_generates_single_bias_point(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {
+                "source_mode": "ac",
+                "source": "S1",
+                "measure_channel": "M1",
+                "source_quantity": "current",
+                "source_value": 1e-5,
+                "frequency_hz": 13.7,
+                "harmonic": 1,
+                "reverse_policy": "auto",
+            },
+            "steps": [{"name": "ok", "state": "I_AB_V_CD"}],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    bias_points = resolve_bias_points(resolved[0])
+    assert len(bias_points) == 1
+    assert bias_points[0].source_value == 1e-05
+
+
+def test_reject_ac_with_dc_source_inversion(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {
+                "source_mode": "ac",
+                "source": "S1",
+                "measure_channel": "M1",
+                "source_quantity": "current",
+                "source_value": 1e-5,
+                "frequency_hz": 13.7,
+                "harmonic": 1,
+                "reverse_policy": "dc_source_inversion",
+            },
+            "steps": [{"name": "bad", "state": "I_AB_V_CD"}],
+        },
+    )
+    with pytest.raises(SequenceValidationError, match="dc_source_inversion"):
+        validate_measurement_sequence(sequence, _contact_map())
 
 
 def test_reject_dc_bias_polarity_other_values(tmp_path):

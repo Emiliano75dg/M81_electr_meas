@@ -1,4 +1,5 @@
 import pandas as pd
+import yaml
 
 from electrical_measurements.instruments.mock import MockEnvironmentController, MockM81Controller
 from electrical_measurements.records import OutputSpec
@@ -76,6 +77,33 @@ def test_dc_actual_current_uses_bias_polarity():
     assert set(round(value, 8) for value in dataframe["source_current_a_dc"]) == {1e-05, -1e-05}
 
 
+def test_dc_reverse_bias_keeps_same_matrix_state(tmp_path):
+    path = tmp_path / "dc_auto.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "dc_auto",
+                "defaults": {
+                    "source_mode": "dc",
+                    "source_quantity": "current",
+                    "source": "S1",
+                    "measure_channel": "M1",
+                    "source_value": 1e-5,
+                    "reverse_policy": "auto",
+                },
+                "steps": [{"name": "dc", "state": "I_AB_V_CD"}],
+            },
+            sort_keys=False,
+        )
+    )
+    runner, _m81, matrix, _resolved = _runner(str(path), "configs/contact_maps/vdp_4contacts_7709.yaml")
+    dataframe = runner.run(temperature_k=300.0, field_t=0.0)
+    assert matrix.apply_state_calls == ["I_AB_V_CD", "I_AB_V_CD"]
+    assert dataframe["state"].tolist() == ["I_AB_V_CD", "I_AB_V_CD"]
+    assert dataframe["source_current_a_dc"].tolist() == [1e-05, -1e-05]
+
+
+
 def test_ac_configuration_does_not_use_bias_polarity():
     runner, _m81, _matrix, _resolved = _runner("configs/sequences/vdp_ac_reciprocity.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
     dataframe = runner.run(temperature_k=300.0, field_t=0.0)
@@ -124,6 +152,8 @@ def test_sequence_stream_records_initial_and_final_environment_values():
     assert not dataframe.empty
     assert "field_t_initial" in dataframe.columns
     assert "field_t_final" in dataframe.columns
+    assert "sequence_mode" in dataframe.columns
+    assert "timestamp_matrix_applied" in dataframe.columns
     assert (dataframe["field_t_final"] >= dataframe["field_t_initial"]).all()
 
 

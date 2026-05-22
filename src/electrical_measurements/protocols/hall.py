@@ -35,14 +35,20 @@ class HallProtocol(MeasurementProtocol):
             description="Legacy Hall preset expressed as a measurement sequence.",
             contact_map=str(getattr(contact_map, "path", "") or ""),
             defaults=SequenceDefaults(
-                excitation_mode="ac",
+                source_mode="ac",
+                source_quantity="current",
                 source=contact_map.instrument_channel("current_source") or source,
+                source_channel=contact_map.instrument_channel("current_source") or source,
                 measure_channels=channels,
+                source_value=current_rms_a,
                 current_rms_a=current_rms_a,
                 frequency_hz=frequency_hz,
                 harmonic=harmonic,
+                measure_mode="lockin",
+                readout="x",
                 settle_s=0.1,
                 repeats=1,
+                reverse_policy="none",
                 lockin=True,
                 metadata={"legacy_protocol": cls.__name__},
             ),
@@ -57,8 +63,9 @@ class HallProtocol(MeasurementProtocol):
 
     This protocol also supports simultaneous measurement of Rxx if a longitudinal
     measurement channel is specified in the contact map (`vxx_meter`).
-    Additionally, it handles current reversal for thermoelectric offset subtraction
-    if a `reverse_current` state is defined.
+    Ordinary Hall measurements do not automatically use `reverse_current`
+    matrix states. Reverse-bias diagnostics should be requested explicitly
+    via a sequence step or dedicated diagnostic workflow.
 
     Attributes:
         state (str): Name of the contact configuration state from the contact_map.
@@ -145,9 +152,8 @@ class HallProtocol(MeasurementProtocol):
         The measurement process includes:
         1. Setting the matrix state for the "forward" measurement.
         2. Enabling the source and measuring Vxy (and Vxx if configured).
-        3. If available, reversing the current and repeating the measurement.
-        4. Calculating Rxy and Rxx by subtracting offsets.
-        5. Calculating Hall density and mobility.
+        3. Calculating Rxy and Rxx from the configured forward state.
+        4. Calculating Hall density and mobility.
 
         Args:
             temperature_k: The target temperature for the measurement.
@@ -174,27 +180,15 @@ class HallProtocol(MeasurementProtocol):
         )
         raw_forward_xy = raw_forward[self.measure_channel]
         raw_forward_xx = raw_forward.get(self.longitudinal_measure_channel) if self.longitudinal_measure_channel else None
-        reverse_state_name = self.contact_map.get_state_name(self.state, "reverse_current")
         raw_reverse_xy = None
         raw_reverse_xx = None
-        if reverse_state_name:
-            _channels_reverse, raw_reverse = self._measure_channels_with_source_enabled(
-                state_name=reverse_state_name,
-                source=self.source,
-                measure_channels=forward_channels,
-                measure_kind="transverse",
-                current_sign=-1.0,
-                lockin=True,
-            )
-            raw_reverse_xy = raw_reverse[self.measure_channel]
-            raw_reverse_xx = raw_reverse.get(self.longitudinal_measure_channel) if self.longitudinal_measure_channel else None
         vxy_forward = raw_forward_xy.get("x", raw_forward_xy.get("value"))
         vxy_reverse = raw_reverse_xy.get("x", raw_reverse_xy.get("value")) if raw_reverse_xy else None
-        v_hall = vxy_forward if vxy_reverse is None else 0.5 * (vxy_forward - vxy_reverse)
+        v_hall = vxy_forward
         rxy = v_hall / self.current_rms_a if self.current_rms_a else None
         vxx_forward = raw_forward_xx.get("x", raw_forward_xx.get("value")) if raw_forward_xx else None
         vxx_reverse = raw_reverse_xx.get("x", raw_reverse_xx.get("value")) if raw_reverse_xx else None
-        vxx = vxx_forward if vxx_reverse is None else 0.5 * (vxx_forward - vxx_reverse)
+        vxx = vxx_forward
         rxx = vxx / self.current_rms_a if (self.current_rms_a and vxx is not None) else None
         density = compute_hall_density(rxy / field_t) if (rxy is not None and field_t not in (None, 0.0)) else {"carrier_density_2d_m2": None, "carrier_density_2d_cm2": None}
         mobility = compute_mobility(self.sheet_resistance_ohm_sq, density["carrier_density_2d_m2"])

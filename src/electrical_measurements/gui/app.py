@@ -56,16 +56,23 @@ def empty_sequence_data(contact_map_path: str | None = None) -> dict[str, object
         "contact_map": contact_map_path or "",
         "expert_mode": False,
         "defaults": {
+            "source_mode": "ac",
             "excitation_mode": "ac",
+            "source_quantity": "current",
             "source": "S1",
+            "source_channel": "S1",
             "measure_channel": "M1",
             "measure_channels": [],
             "current_a": None,
             "current_rms_a": 1.0e-5,
+            "source_value": 1.0e-5,
             "frequency_hz": 13.7,
             "harmonic": 1,
+            "measure_mode": "lockin",
+            "readout": "x",
             "settle_s": 0.1,
             "repeats": 1,
+            "reverse_policy": "none",
             "lockin": True,
             "metadata": {},
         },
@@ -122,31 +129,31 @@ def relay_channels_for_state(contact_map: ContactMap | None, state_name: str) ->
 
 
 def sequence_step_table_row(step: dict[str, object], defaults: dict[str, object], contact_map: ContactMap | None, index: int) -> dict[str, str]:
-    mode = str(step.get("excitation_mode") or defaults.get("excitation_mode") or "")
+    mode = str(step.get("source_mode") or step.get("excitation_mode") or defaults.get("source_mode") or defaults.get("excitation_mode") or "")
     measure_channels = step.get("measure_channels")
     if not measure_channels:
         single_channel = step.get("measure_channel") or defaults.get("measure_channel")
         measure_channels = [single_channel] if single_channel else defaults.get("measure_channels", [])
     measure_channels = [item for item in measure_channels if item]
     if mode == "dc":
-        current_a = step.get("current_a")
+        current_a = step.get("source_value", step.get("current_a"))
         if current_a is None:
-            current_a = defaults.get("current_a")
-        polarity = step.get("bias_polarity", 1)
+            current_a = defaults.get("source_value", defaults.get("current_a"))
+        polarity = -1 if str(step.get("reverse_policy", "")).strip().lower() == "dc_source_inversion" and float(current_a or 0.0) < 0 else step.get("bias_polarity", 1)
         current_text = ""
         if current_a is not None:
             current_text = f"{float(current_a) * int(polarity):.6g}"
     else:
-        current_rms_a = step.get("current_rms_a")
+        current_rms_a = step.get("source_value", step.get("current_rms_a"))
         if current_rms_a is None:
-            current_rms_a = defaults.get("current_rms_a")
+            current_rms_a = defaults.get("source_value", defaults.get("current_rms_a"))
         current_text = "" if current_rms_a is None else f"{float(current_rms_a):.6g}"
     return {
         "index": str(index + 1),
         "step_name": str(step.get("name", "")),
         "state_name": str(step.get("state", "")),
         "excitation_mode": mode,
-        "source": str(step.get("source") or defaults.get("source") or ""),
+        "source": str(step.get("source_channel") or step.get("source") or defaults.get("source_channel") or defaults.get("source") or ""),
         "current": current_text,
         "frequency_hz": str(step.get("frequency_hz") if step.get("frequency_hz") is not None else defaults.get("frequency_hz") or ""),
         "harmonic": str(step.get("harmonic") if step.get("harmonic") is not None else defaults.get("harmonic") or ""),
@@ -154,6 +161,7 @@ def sequence_step_table_row(step: dict[str, object], defaults: dict[str, object]
         "outputs": format_outputs_mapping(step.get("outputs") if isinstance(step.get("outputs"), dict) else None),
         "settle_s": str(step.get("settle_s") if step.get("settle_s") is not None else defaults.get("settle_s") or ""),
         "repeats": str(step.get("repeats") if step.get("repeats") is not None else defaults.get("repeats") or ""),
+        "reverse_policy": str(step.get("reverse_policy") or defaults.get("reverse_policy") or ""),
         "tags": stringify_step_tags(step),
         "reciprocal_step_of": str(step.get("reciprocal_step_of") or step.get("reciprocal_of") or ""),
         "relay_channels": relay_channels_for_state(contact_map, str(step.get("state", ""))),

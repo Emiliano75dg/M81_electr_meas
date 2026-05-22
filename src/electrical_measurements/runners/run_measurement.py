@@ -47,6 +47,15 @@ from ..switching.matrix7709 import Matrix7709, SafeMeasurementSession
 
 LOGGER = logging.getLogger(__name__)
 STREAM_RECORD_BUILDER = MeasurementRecordBuilder(context_name="legacy_stream")
+PROTOCOL_REGISTRY = {
+    "hall": HallProtocol,
+    "hallbar_mr": MagnetoresistanceProtocol,
+    "vdp": VanDerPauwProtocol,
+    "vdp_hall": VanDerPauwHallProtocol,
+    "second_harmonic": SecondHarmonicProtocol,
+    "reciprocity": ReciprocityProtocol,
+    "check_contacts": ContactCheckProtocol,
+}
 
 
 @dataclass
@@ -125,7 +134,13 @@ def position_environment(environment: Any, temperature: float, field: float) -> 
     return resolve_measurement_environment(environment, requested_temperature=temperature, requested_field=field)
 
 
-def build_protocol(args: argparse.Namespace, config: dict[str, Any], contact_map: ContactMap, m81: Any, matrix: Matrix7709):
+def _common_protocol_kwargs(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    contact_map: ContactMap,
+    m81: Any,
+    matrix: Matrix7709,
+) -> tuple[dict[str, Any], list[str], str | None]:
     selected_states = [item.strip() for item in (getattr(args, "selected_states", "") or "").split(",") if item.strip()]
     selected_state_name = getattr(args, "state_name", None)
     common = {
@@ -136,6 +151,11 @@ def build_protocol(args: argparse.Namespace, config: dict[str, Any], contact_map
         "settle_s": args.settle,
         "dry_run": args.dry_run,
     }
+    return common, selected_states, selected_state_name
+
+
+def build_protocol(args: argparse.Namespace, config: dict[str, Any], contact_map: ContactMap, m81: Any, matrix: Matrix7709):
+    common, selected_states, selected_state_name = _common_protocol_kwargs(args, config, contact_map, m81, matrix)
     if args.protocol == "hall":
         return HallProtocol(state=selected_state_name or "hallbar_forward", current_rms_a=args.current, frequency_hz=args.frequency, harmonic=args.harmonic, **common)
     if args.protocol == "hallbar_mr":
@@ -475,6 +495,8 @@ def run_stream_ramp_command(
 ) -> RunSummary:
     if args.ramp_target is None or args.ramp_rate is None:
         raise RunnerInputError("Streaming ramp mode requires --ramp-target and --ramp-rate")
+    if not environment_supports_control(environment):
+        raise RunnerInputError("Streaming ramp mode requires an environment with control enabled; async-poll mode is read-only")
     state_name, measure_channel, source_channel, harmonic = extract_stream_settings(protocol)
     started_at = datetime.now(timezone.utc).isoformat()
     LOGGER.info("Starting stream-ramp run protocol=%s state=%s quantity=%s target=%s rate=%s", args.protocol, getattr(protocol, "state", None), args.ramp_quantity, args.ramp_target, args.ramp_rate)
@@ -499,8 +521,6 @@ def run_stream_ramp_command(
         channels = matrix.apply_state(state_name)
         m81.configure_trace_stream(channel=measure_channel, points=args.stream_samples, interval_s=args.stream_interval)
         m81.enable_source(source_channel)
-        if not environment_supports_control(environment):
-            raise RunnerInputError("Streaming ramp mode requires an environment with control enabled; async-poll mode is read-only")
         if args.ramp_quantity == "field":
             environment.start_field_ramp(args.ramp_target, args.ramp_rate)
         else:

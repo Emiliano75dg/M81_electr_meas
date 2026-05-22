@@ -4,7 +4,12 @@ import pytest
 import yaml
 
 from electrical_measurements.exceptions import SequenceValidationError
-from electrical_measurements.sequences import load_measurement_sequence, measurement_sequence_from_dict, measurement_sequence_to_dict
+from electrical_measurements.sequences import (
+    load_measurement_sequence,
+    measurement_sequence_from_dict,
+    measurement_sequence_to_dict,
+    save_measurement_sequence,
+)
 
 
 def test_load_valid_ac_sequence():
@@ -17,7 +22,7 @@ def test_load_valid_ac_sequence():
 def test_load_valid_dc_sequence():
     sequence = load_measurement_sequence("configs/sequences/vdp_dc_reverse_bias.yaml")
     assert sequence.name == "vdp_dc_reverse_bias"
-    assert sequence.defaults.excitation_mode == "dc"
+    assert sequence.defaults.source_mode == "dc"
     assert sequence.steps[0].bias_polarity == 1
 
 
@@ -85,3 +90,24 @@ def test_roundtrip_sequence_dict_conversion():
         "M1": {"name": "rxx_ohm", "transform": "lockin_x_over_current"},
         "M2": {"name": "rxy_ohm", "transform": "lockin_x_over_current"},
     }
+
+
+def test_load_sequence_from_top_level_wrapper():
+    wrapped = {
+        "sequence": {
+            "name": "wrapped",
+            "defaults": {"source_mode": "ac", "source": "S1", "measure_channel": "M1", "source_value": 1e-5, "frequency_hz": 13.7, "harmonic": 1},
+            "steps": [{"name": "a", "state": "I_AB_V_CD"}],
+        }
+    }
+    sequence = measurement_sequence_from_dict(wrapped)
+    assert sequence.name == "wrapped"
+    assert sequence.defaults.source_mode == "ac"
+
+
+def test_save_and_reload_roundtrip(tmp_path: Path):
+    original = load_measurement_sequence("configs/sequences/hallbar_ac_rxx_rxy.yaml")
+    path = tmp_path / "roundtrip.yaml"
+    save_measurement_sequence(original, path)
+    reloaded = load_measurement_sequence(path)
+    assert measurement_sequence_to_dict(reloaded) == measurement_sequence_to_dict(original)

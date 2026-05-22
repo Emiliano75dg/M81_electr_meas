@@ -296,16 +296,20 @@ Sequence examples:
 - [configs/sequences/vdp_dc_reverse_bias.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_dc_reverse_bias.yaml)
 - [configs/sequences/hallbar_ac_rxx_rxy.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_ac_rxx_rxy.yaml)
 - [configs/sequences/second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_ac.yaml)
+- [configs/sequences/example_hallbar_dc_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_hallbar_dc_sequence.yaml)
+- [configs/sequences/example_second_harmonic_ac_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_second_harmonic_ac_sequence.yaml)
 
 Important distinctions:
 
-- DC reverse bias uses `bias_polarity: +1/-1` and changes the sign of the applied DC current
-- AC lock-in excitation does not normally need reverse-bias steps
+- Sequence steps now describe `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, `repeats`, `settle_s`, and `reverse_policy`
+- In DC, reverse bias must keep the same relay state and invert only the source sign; use `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
+- In AC/lock-in, `reverse_policy: auto` resolves to a single measurement; no automatic reverse state is generated
+- `reverse_current` contact-map relations are treated as explicit diagnostic helpers only and are not used automatically for reverse bias
 - reciprocity means a different matrix state with current and voltage pairs exchanged
 - magnetic-field reversal is handled by the outer field loop
 - temperature sweeps and ramps are handled by the outer environment loop
 - all relay switching still goes through `Matrix7709.apply_state()`
-- sequence dry-run previews show resolved relay channels, excitation parameters, outputs, repeats, tags, and reciprocity links without touching hardware
+- sequence dry-run previews show resolved relay channels, excitation parameters, resolved bias points, outputs, repeats, tags, and reciprocity links without touching hardware
 - legacy protocol implementations keep working, and the codebase now also exposes protocol-to-sequence preset builders as a compatibility path
 
 Typical workflow:
