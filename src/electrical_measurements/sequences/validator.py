@@ -54,6 +54,8 @@ def _validate_mode(value: str, context: str) -> str:
 
 def _validate_source_quantity(value: str | None, context: str) -> str:
     normalized = str(value or "current").strip().lower()
+    # Keep accepting syntactically valid schema values here; runner support is enforced
+    # later when resolving the concrete hardware-facing source configuration.
     if normalized not in {"current", "voltage"}:
         raise SequenceValidationError(f"{context} must be 'current' or 'voltage'")
     return normalized
@@ -145,6 +147,8 @@ def _resolve_source_value(step: SequenceStep, defaults: SequenceDefaults, *, sou
     value = float(explicit_value)
     if value <= 0:
         raise SequenceValidationError(f"Step '{step.name}' source_value must be > 0")
+    # The schema allows voltage so we can validate payload shape cleanly, but the
+    # current hardware runner only knows how to program current sourcing.
     if source_quantity != "current":
         raise SequenceValidationError(
             f"Only current sourcing is currently supported by the hardware runner; step '{step.name}' requested source_quantity={source_quantity}"

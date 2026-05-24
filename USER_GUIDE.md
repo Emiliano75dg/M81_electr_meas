@@ -569,6 +569,7 @@ Requirements for `stream-observe`:
 - the software will only read the environment and never start or stop ramps
 - sequence streaming supports AC/lock-in steps only
 - sequence streaming supports only one primary measurement channel
+- sequence streaming supports a single primary measurement channel; multi-channel measurements must use stable/discrete mode
 - multi-channel sequence measurements should use stable/discrete mode instead of trace streaming
 
 Requirements:
