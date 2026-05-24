@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 import yaml
 
 from electrical_measurements.instruments.mock import MockEnvironmentController, MockM81Controller
@@ -11,6 +12,7 @@ class TrackingM81(MockM81Controller):
     def __post_init__(self) -> None:
         super().__post_init__()
         self.events: list[str] = []
+        self.lockin_reads: dict[str, int] = {}
 
     def disable_all_sources(self) -> None:
         self.events.append("disable_all_sources")
@@ -19,6 +21,10 @@ class TrackingM81(MockM81Controller):
     def enable_source(self, source: str) -> None:
         self.events.append(f"enable_source:{source}")
         super().enable_source(source)
+
+    def read_lockin(self, measure_channel: str) -> dict[str, object]:
+        self.lockin_reads[measure_channel] = self.lockin_reads.get(measure_channel, 0) + 1
+        return super().read_lockin(measure_channel)
 
 
 class MatrixFake:
@@ -145,7 +151,7 @@ def test_dry_run_preview_includes_relay_channels():
 
 
 def test_sequence_stream_records_initial_and_final_environment_values():
-    runner, _m81, _matrix, _resolved = _runner("configs/sequences/vdp_ac_reciprocity.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
+    runner, m81, _matrix, resolved = _runner("configs/sequences/vdp_ac_reciprocity.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
     environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
     environment.start_field_ramp(1.0, 60.0)
     dataframe = runner.run_stream(environment=environment, stream_samples=3, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
@@ -155,10 +161,11 @@ def test_sequence_stream_records_initial_and_final_environment_values():
     assert "sequence_mode" in dataframe.columns
     assert "timestamp_matrix_applied" in dataframe.columns
     assert (dataframe["field_t_final"] >= dataframe["field_t_initial"]).all()
+    assert m81.lockin_reads["M1"] == len(resolved) * 3
 
 
 def test_sequence_stream_reads_secondary_lockin_channels_for_multichannel_step():
-    runner, _m81, _matrix, _resolved = _runner("configs/sequences/hallbar_ac_rxx_rxy.yaml", "configs/contact_maps/hallbar_6contacts_7709.yaml")
+    runner, m81, _matrix, resolved = _runner("configs/sequences/hallbar_ac_rxx_rxy.yaml", "configs/contact_maps/hallbar_6contacts_7709.yaml")
     environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
     dataframe = runner.run_stream(environment=environment, stream_samples=2, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
     forward = dataframe[dataframe["step_name"] == "forward_rxx_rxy"]
@@ -167,6 +174,17 @@ def test_sequence_stream_reads_secondary_lockin_channels_for_multichannel_step()
     assert "m2_lockin_x" in forward.columns
     assert forward["rxx_ohm"].notna().all()
     assert forward["rxy_ohm"].notna().all()
+    primary_m1_steps = sum(1 for step in resolved if step.primary_measure_channel == "M1")
+    secondary_m2_steps = sum(1 for step in resolved if "M2" in step.measure_channels and step.primary_measure_channel != "M2")
+    assert m81.lockin_reads["M1"] == primary_m1_steps * 2
+    assert m81.lockin_reads["M2"] >= secondary_m2_steps * 2
+
+
+def test_sequence_stream_rejects_dc_steps():
+    runner, _m81, _matrix, _resolved = _runner("configs/sequences/vdp_dc_reverse_bias.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
+    environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
+    with pytest.raises(RuntimeError, match="supports only AC steps"):
+        runner.run_stream(environment=environment, stream_samples=2, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
 
 
 def test_records_built_with_output_specs():

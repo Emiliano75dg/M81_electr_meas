@@ -157,6 +157,8 @@ Use measurement sequences to answer:
 
 This separation means you do not need to duplicate a contact map just to try a different electrical measurement order.
 
+Sequence YAML is the preferred measurement path for new work. Legacy protocol commands remain available as quick-start compatibility paths.
+
 Van der Pauw example: [configs/contact_maps/vdp_4contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/vdp_4contacts_7709.yaml)
 
 Hall bar example: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_7709.yaml)
@@ -174,9 +176,10 @@ Safety note:
 
 - all relay switching still goes through `Matrix7709.apply_state()`
 - sequence runs never bypass the matrix safety interlock
+- `Matrix7709.apply_state()` always disables sources before switching and never re-enables arbitrary M81 sources
 - dry-run preview prints the resolved plan without touching hardware
 - the dry-run table includes resolved relays, excitation parameters, outputs, repeats, tags, and reciprocity links
-- legacy protocol classes now expose sequence preset builders so protocol definitions and sequence mode can converge over time without breaking the old CLI
+- legacy protocol classes remain compatibility helpers while sequence YAML is the preferred path
 
 ## Mock mode
 
@@ -214,9 +217,9 @@ electrical-measure run \
 Sequence concepts:
 
 - Sequence files now use an explicit `MeasurementSequence` model with `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, and `reverse_policy`
-- DC reverse bias is DC-only and is resolved by source inversion on the same matrix state with `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
+- DC reverse bias is DC-only and is resolved by reversing current polarity on the same matrix state with `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
 - AC lock-in sequences use `source_mode: ac`, `frequency_hz`, and `harmonic`; `reverse_policy: auto` intentionally resolves to a single measurement
-- ordinary AC Van der Pauw, Hall, magnetoresistance, and second-harmonic sequences do not need reverse-bias steps
+- ordinary AC Van der Pauw, Hall, magnetoresistance, and second-harmonic sequences normally do not need reverse-bias steps
 - `reverse_current` contact-map relations are no longer used as automatic reverse bias; keep them only for explicit diagnostic states
 - reciprocity is a different matrix state with exchanged current and voltage contacts
 - magnetic-field reversal belongs to the outer field loop, not the matrix sequence
@@ -275,7 +278,7 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
-`stream-observe` continuously acquires M81 data and polls environment state, but it never starts or stops a field or temperature ramp.
+`stream-observe` continuously acquires M81 data and polls environment state, but it never starts or stops a field or temperature ramp. Sequence streaming currently supports AC/lock-in steps only.
 
 To acquire synchronized data during a software-controlled field or temperature ramp:
 
@@ -296,7 +299,7 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
-`stream-ramp` is preserved for explicit control mode only. When using a Teslatron backend, enable it with `allow_control: true`. The runner now checks control capability before any relay closure, trace setup, source enable, or acquisition start.
+`stream-ramp` is preserved for explicit control mode only. When using a Teslatron backend, enable it with `allow_control: true`. With `allow_control: false`, Teslatron stays read-only and this software will not send setpoint or ramp commands. The runner now checks control capability before any relay closure, trace setup, source enable, or acquisition start.
 
 The resulting dataset stores `trace_index`, `trace_channel`, `field_t`, `temperature_k`, `environment_timestamp`, and per-step sequence metadata such as `sequence_id`, `step_index`, `state_name`, `source_mode`, `source_value`, `source_polarity`, `timestamp_matrix_applied`, `timestamp_measure_start`, and `timestamp_measure_end`.
 

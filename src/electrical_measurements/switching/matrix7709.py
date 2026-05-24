@@ -70,12 +70,8 @@ class Matrix7709:
         self.switching_log.append(switching_log_entry(state_name, channels))
         if hasattr(self.controller, "apply_state"):
             self.controller.apply_state(state_name, channels)
-        if reenable_sources and self.m81:
-            for source_name in ["S1", "S2", "S3"]:
-                try:
-                    self.m81.enable_source(source_name)
-                except Exception:
-                    continue
+        if reenable_sources:
+            LOGGER.warning("Matrix7709.apply_state(reenable_sources=True) is deprecated and ignored for hardware safety")
         return channels
 
     def emergency_stop(self) -> None:

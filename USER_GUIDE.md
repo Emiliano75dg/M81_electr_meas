@@ -55,6 +55,8 @@ Examples:
 
 A protocol is the measurement logic to run on top of the configured instruments and selected contact-map states.
 
+For new measurements, prefer sequence YAML. Legacy protocols remain useful as quick-start compatibility paths and familiar CLI presets.
+
 Supported protocols:
 
 - `hall`
@@ -87,6 +89,8 @@ Three run modes exist:
 - `stable`: move to a target temperature/field and then take measurements
 - `stream-observe`: continuously acquire M81 data and poll environment state without starting or stopping ramps
 - `stream-ramp`: stream data while a field or temperature ramp is in progress
+
+For sequence runs, streaming currently supports AC/lock-in steps only.
 
 ---
 
@@ -283,6 +287,8 @@ Contact maps describe the wiring.
 
 Measurement sequences describe the ordered electrical procedure.
 
+Sequence YAML is the preferred measurement path because it keeps switching, source setup, and repeat policy explicit in one place.
+
 - which named states to measure
 - in which order
 - which M81 channels to read
@@ -302,15 +308,16 @@ Sequence examples:
 Important distinctions:
 
 - Sequence steps now describe `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, `repeats`, `settle_s`, and `reverse_policy`
-- In DC, reverse bias must keep the same relay state and invert only the source sign; use `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
-- In AC/lock-in, `reverse_policy: auto` resolves to a single measurement; no automatic reverse state is generated
+- In DC, reverse bias must keep the same relay state and reverse only the current polarity; use `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
+- In AC/lock-in, `reverse_policy: auto` resolves to a single measurement; no automatic reverse state is generated, and ordinary AC lock-in work normally does not need reverse bias
 - `reverse_current` contact-map relations are treated as explicit diagnostic helpers only and are not used automatically for reverse bias
 - reciprocity means a different matrix state with current and voltage pairs exchanged
 - magnetic-field reversal is handled by the outer field loop
 - temperature sweeps and ramps are handled by the outer environment loop
 - all relay switching still goes through `Matrix7709.apply_state()`
+- `Matrix7709.apply_state()` always disables sources before switching and never re-enables arbitrary M81 sources
 - sequence dry-run previews show resolved relay channels, excitation parameters, resolved bias points, outputs, repeats, tags, and reciprocity links without touching hardware
-- legacy protocol implementations keep working, and the codebase now also exposes protocol-to-sequence preset builders as a compatibility path
+- legacy protocol implementations keep working as compatibility paths
 
 Typical workflow:
 
@@ -559,6 +566,7 @@ Requirements for `stream-observe`:
 
 - protocol must be single-state for current streaming implementation
 - the software will only read the environment and never start or stop ramps
+- sequence streaming supports AC/lock-in steps only
 
 Requirements:
 
@@ -605,6 +613,7 @@ Notes:
 
 - in `async-poll`, stream-ramp is intentionally rejected because the backend is read-only
 - in `async-poll`, use `stream-observe` for externally controlled ramps
+- with Teslatron `allow_control: false`, this software remains read-only and will not send ramp or setpoint commands
 - the resulting stream file includes synchronized environment values
 
 ---

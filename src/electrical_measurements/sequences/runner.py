@@ -146,35 +146,35 @@ class SequenceRunner:
         configure_m81_source_for_ac(self.m81, excitation, list(step.measure_channels))
         return excitation
 
-    def _read_channels(self, step: ResolvedSequenceStep) -> dict[str, dict[str, Any]]:
+    def _read_channels_for(self, step: ResolvedSequenceStep, channels: tuple[str, ...] | list[str]) -> dict[str, dict[str, Any]]:
         if self.m81 is None:
             return {}
         if step.measure_mode == "dc" or (step.source_mode == "dc" and step.measure_mode != "lockin"):
-            return {channel: self.m81.read_dc(channel) for channel in step.measure_channels}
-        return {channel: self.m81.read_lockin(channel) for channel in step.measure_channels}
+            return {channel: self.m81.read_dc(channel) for channel in channels}
+        return {channel: self.m81.read_lockin(channel) for channel in channels}
+
+    def _read_channels(self, step: ResolvedSequenceStep) -> dict[str, dict[str, Any]]:
+        return self._read_channels_for(step, step.measure_channels)
 
     def _merge_stream_trace_into_readings(
         self,
         step: ResolvedSequenceStep,
         trace_row: dict[str, Any],
     ) -> dict[str, dict[str, Any]]:
-        readings = self._read_channels(step)
         primary = step.primary_measure_channel
         if primary is None:
-            return readings
-        primary_reading = dict(readings.get(primary, {}))
-        primary_reading.update(
-            {
-                "timestamp": trace_row.get("timestamp", primary_reading.get("timestamp")),
-                "x": trace_row.get("x"),
-                "y": trace_row.get("y"),
-                "r": trace_row.get("r"),
-                "theta_deg": trace_row.get("theta_deg"),
-                "frequency_hz": trace_row.get("frequency_hz"),
-                "harmonic": trace_row.get("harmonic"),
-            }
-        )
-        readings[primary] = primary_reading
+            return {}
+        secondary_channels = tuple(channel for channel in step.measure_channels if channel != primary)
+        readings = self._read_channels_for(step, secondary_channels)
+        readings[primary] = {
+            "timestamp": trace_row.get("timestamp"),
+            "x": trace_row.get("x"),
+            "y": trace_row.get("y"),
+            "r": trace_row.get("r"),
+            "theta_deg": trace_row.get("theta_deg"),
+            "frequency_hz": trace_row.get("frequency_hz"),
+            "harmonic": trace_row.get("harmonic"),
+        }
         return readings
 
     def _build_record(
