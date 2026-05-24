@@ -136,7 +136,7 @@ class SequenceRunner:
             raise RuntimeError("SequenceRunner requires m81 in non-dry-run mode")
         if step.source_quantity != "current":
             raise RuntimeError(
-                f"Sequence step '{step.name}' requires source_quantity={step.source_quantity}; current sourcing is the only implemented hardware mode"
+                f"Only current sourcing is currently supported by the hardware runner; step '{step.name}' requested source_quantity={step.source_quantity}"
             )
         if step.source_mode == "dc":
             excitation = self._resolve_dc_excitation(step, source_value=source_value if source_value is not None else step.source_value)
@@ -164,9 +164,8 @@ class SequenceRunner:
         primary = step.primary_measure_channel
         if primary is None:
             return {}
-        secondary_channels = tuple(channel for channel in step.measure_channels if channel != primary)
-        readings = self._read_channels_for(step, secondary_channels)
-        readings[primary] = {
+        return {
+            primary: {
             "timestamp": trace_row.get("timestamp"),
             "x": trace_row.get("x"),
             "y": trace_row.get("y"),
@@ -175,7 +174,7 @@ class SequenceRunner:
             "frequency_hz": trace_row.get("frequency_hz"),
             "harmonic": trace_row.get("harmonic"),
         }
-        return readings
+        }
 
     def _build_record(
         self,
@@ -305,6 +304,10 @@ class SequenceRunner:
                 raise RuntimeError(f"Streaming sequence mode currently supports only AC steps, got '{step.source_mode}' for step '{step.name}'")
             if step.primary_measure_channel is None:
                 raise RuntimeError(f"Streaming sequence step '{step.name}' requires at least one measurement channel")
+            if len(step.measure_channels) != 1:
+                raise RuntimeError(
+                    f"Streaming sequence currently supports a single primary measurement channel; step '{step.name}' configured {len(step.measure_channels)} channels"
+                )
             self.m81.disable_all_sources()
             relay_channels = self.matrix.apply_state(step.state)
             timestamp_matrix_applied = _utcnow()

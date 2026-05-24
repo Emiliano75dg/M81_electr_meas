@@ -217,6 +217,7 @@ electrical-measure run \
 Sequence concepts:
 
 - Sequence files now use an explicit `MeasurementSequence` model with `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, and `reverse_policy`
+- `source_quantity: current` is currently the only hardware-supported sourcing mode
 - DC reverse bias is DC-only and is resolved by reversing current polarity on the same matrix state with `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
 - AC lock-in sequences use `source_mode: ac`, `frequency_hz`, and `harmonic`; `reverse_policy: auto` intentionally resolves to a single measurement
 - ordinary AC Van der Pauw, Hall, magnetoresistance, and second-harmonic sequences normally do not need reverse-bias steps
@@ -278,7 +279,7 @@ electrical-measure run \
   --stream-interval 0.1
 ```
 
-`stream-observe` continuously acquires M81 data and polls environment state, but it never starts or stops a field or temperature ramp. Sequence streaming currently supports AC/lock-in steps only.
+`stream-observe` continuously acquires M81 data and polls environment state, but it never starts or stops a field or temperature ramp. Sequence streaming currently supports AC/lock-in steps only, and only for a single primary measurement channel. Multi-channel sequence measurements should use stable/discrete mode instead of trace streaming.
 
 To acquire synchronized data during a software-controlled field or temperature ramp:
 

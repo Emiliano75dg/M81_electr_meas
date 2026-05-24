@@ -226,7 +226,7 @@ def test_sequence_stream_ramp_runs(tmp_path: Path):
     assert dataframe["field_t_final"].iloc[-1] >= dataframe["field_t_initial"].iloc[0]
 
 
-def test_sequence_stream_multichannel_outputs_are_saved(tmp_path: Path):
+def test_sequence_stream_multichannel_sequence_is_rejected(tmp_path: Path):
     config = _write_config(tmp_path)
     args = build_run_namespace(
         config=str(config),
@@ -240,11 +240,6 @@ def test_sequence_stream_multichannel_outputs_are_saved(tmp_path: Path):
         stream_samples=2,
         stream_interval=0.01,
     )
-    result = run_command(args)
-    assert result == 0
-    dataframe = pd.read_csv(tmp_path / "hallbar_ac_rxx_rxy_stream.csv")
-    forward = dataframe[dataframe["step_name"] == "forward_rxx_rxy"]
-    assert forward["rxx_ohm"].notna().all()
-    assert forward["rxy_ohm"].notna().all()
-    assert "m1_lockin_x" in dataframe.columns
-    assert "m2_lockin_x" in dataframe.columns
+    with pytest.raises(RuntimeError, match="single primary measurement channel"):
+        run_command(args)
+    assert not (tmp_path / "hallbar_ac_rxx_rxy_stream.csv").exists()

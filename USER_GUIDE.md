@@ -308,6 +308,7 @@ Sequence examples:
 Important distinctions:
 
 - Sequence steps now describe `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, `repeats`, `settle_s`, and `reverse_policy`
+- `source_quantity: current` is currently the only hardware-supported sourcing mode
 - In DC, reverse bias must keep the same relay state and reverse only the current polarity; use `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
 - In AC/lock-in, `reverse_policy: auto` resolves to a single measurement; no automatic reverse state is generated, and ordinary AC lock-in work normally does not need reverse bias
 - `reverse_current` contact-map relations are treated as explicit diagnostic helpers only and are not used automatically for reverse bias
@@ -567,6 +568,8 @@ Requirements for `stream-observe`:
 - protocol must be single-state for current streaming implementation
 - the software will only read the environment and never start or stop ramps
 - sequence streaming supports AC/lock-in steps only
+- sequence streaming supports only one primary measurement channel
+- multi-channel sequence measurements should use stable/discrete mode instead of trace streaming
 
 Requirements:
 

@@ -27,6 +27,14 @@ class TrackingM81(MockM81Controller):
         return super().read_lockin(measure_channel)
 
 
+class NoSyncReadStreamRunner(SequenceRunner):
+    def _read_channels(self, step):  # type: ignore[override]
+        raise AssertionError("Streaming merge must not call _read_channels() for the primary trace channel")
+
+    def _read_channels_for(self, step, channels):  # type: ignore[override]
+        raise AssertionError("Streaming merge must not call synchronous channel reads during trace merge")
+
+
 class MatrixFake:
     def __init__(self, event_sink: list[str]) -> None:
         self.apply_state_calls: list[str] = []
@@ -151,7 +159,7 @@ def test_dry_run_preview_includes_relay_channels():
 
 
 def test_sequence_stream_records_initial_and_final_environment_values():
-    runner, m81, _matrix, resolved = _runner("configs/sequences/vdp_ac_reciprocity.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
+    runner, _m81, _matrix, _resolved = _runner("configs/sequences/vdp_ac_reciprocity.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
     environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
     environment.start_field_ramp(1.0, 60.0)
     dataframe = runner.run_stream(environment=environment, stream_samples=3, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
@@ -161,23 +169,13 @@ def test_sequence_stream_records_initial_and_final_environment_values():
     assert "sequence_mode" in dataframe.columns
     assert "timestamp_matrix_applied" in dataframe.columns
     assert (dataframe["field_t_final"] >= dataframe["field_t_initial"]).all()
-    assert m81.lockin_reads["M1"] == len(resolved) * 3
 
 
-def test_sequence_stream_reads_secondary_lockin_channels_for_multichannel_step():
-    runner, m81, _matrix, resolved = _runner("configs/sequences/hallbar_ac_rxx_rxy.yaml", "configs/contact_maps/hallbar_6contacts_7709.yaml")
+def test_sequence_stream_rejects_multichannel_steps():
+    runner, _m81, _matrix, _resolved = _runner("configs/sequences/hallbar_ac_rxx_rxy.yaml", "configs/contact_maps/hallbar_6contacts_7709.yaml")
     environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
-    dataframe = runner.run_stream(environment=environment, stream_samples=2, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
-    forward = dataframe[dataframe["step_name"] == "forward_rxx_rxy"]
-    assert not forward.empty
-    assert "m1_lockin_x" in forward.columns
-    assert "m2_lockin_x" in forward.columns
-    assert forward["rxx_ohm"].notna().all()
-    assert forward["rxy_ohm"].notna().all()
-    primary_m1_steps = sum(1 for step in resolved if step.primary_measure_channel == "M1")
-    secondary_m2_steps = sum(1 for step in resolved if "M2" in step.measure_channels and step.primary_measure_channel != "M2")
-    assert m81.lockin_reads["M1"] == primary_m1_steps * 2
-    assert m81.lockin_reads["M2"] >= secondary_m2_steps * 2
+    with pytest.raises(RuntimeError, match="single primary measurement channel"):
+        runner.run_stream(environment=environment, stream_samples=2, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
 
 
 def test_sequence_stream_rejects_dc_steps():
@@ -185,6 +183,27 @@ def test_sequence_stream_rejects_dc_steps():
     environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
     with pytest.raises(RuntimeError, match="supports only AC steps"):
         runner.run_stream(environment=environment, stream_samples=2, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
+
+
+def test_sequence_stream_valid_step_does_not_use_sync_reads_for_trace_merge():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    sequence = load_measurement_sequence("configs/sequences/vdp_ac_reciprocity.yaml")
+    resolved = validate_measurement_sequence(sequence, contact_map)
+    m81 = TrackingM81()
+    matrix = MatrixFake(m81.events)
+    runner = NoSyncReadStreamRunner(
+        sequence=sequence,
+        contact_map=contact_map,
+        resolved_steps=resolved,
+        m81=m81,
+        matrix=matrix,
+        sample_id="mock-sample",
+    )
+    environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)
+
+    dataframe = runner.run_stream(environment=environment, stream_samples=2, stream_interval=0.01, temperature_k=300.0, field_t=0.0)
+
+    assert not dataframe.empty
 
 
 def test_records_built_with_output_specs():

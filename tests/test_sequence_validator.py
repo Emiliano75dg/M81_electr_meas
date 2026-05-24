@@ -256,7 +256,7 @@ def test_unsupported_voltage_sourcing_fails_during_validation(tmp_path):
             "steps": [{"name": "bad", "state": "I_AB_V_CD"}],
         },
     )
-    with pytest.raises(SequenceValidationError, match="support only source_quantity=current"):
+    with pytest.raises(SequenceValidationError, match="Only current sourcing is currently supported by the hardware runner"):
         validate_measurement_sequence(sequence, _contact_map())
 
 

@@ -147,7 +147,7 @@ def _resolve_source_value(step: SequenceStep, defaults: SequenceDefaults, *, sou
         raise SequenceValidationError(f"Step '{step.name}' source_value must be > 0")
     if source_quantity != "current":
         raise SequenceValidationError(
-            f"Step '{step.name}' requests source_quantity={source_quantity}; sequence-based hardware measurements currently support only source_quantity=current"
+            f"Only current sourcing is currently supported by the hardware runner; step '{step.name}' requested source_quantity={source_quantity}"
         )
     return value
 
