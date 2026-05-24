@@ -1,7 +1,7 @@
 import pytest
 
 from electrical_measurements.instruments.mock import MockM81Controller
-from electrical_measurements.runners.run_measurement import ADVERTISED_PROTOCOLS, build_protocol, build_run_namespace
+from electrical_measurements.runners.run_measurement import ADVERTISED_PROTOCOLS, build_parser, build_protocol, build_run_namespace
 from electrical_measurements.switching.contact_map import ContactMap
 from electrical_measurements.switching.matrix7709 import Matrix7709
 
@@ -45,3 +45,10 @@ def test_every_advertised_protocol_can_be_built(protocol_name: str, contact_map_
     protocol = build_protocol(args, config, contact_map, m81, matrix)
 
     assert protocol is not None
+
+
+@pytest.mark.parametrize("protocol_name", ADVERTISED_PROTOCOLS)
+def test_run_parser_accepts_every_advertised_protocol(protocol_name: str):
+    parser = build_parser()
+    args = parser.parse_args(["run", "--protocol", protocol_name])
+    assert args.protocol == protocol_name
