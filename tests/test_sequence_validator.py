@@ -260,6 +260,27 @@ def test_unsupported_voltage_sourcing_fails_during_validation(tmp_path):
         validate_measurement_sequence(sequence, _contact_map())
 
 
+def test_invalid_source_quantity_value_fails_during_validation(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "demo",
+            "defaults": {
+                "source_mode": "ac",
+                "source_quantity": "foo",
+                "source": "S1",
+                "measure_channel": "M1",
+                "source_value": 1e-5,
+                "frequency_hz": 13.7,
+                "harmonic": 1,
+            },
+            "steps": [{"name": "bad", "state": "I_AB_V_CD"}],
+        },
+    )
+    with pytest.raises(SequenceValidationError, match="must be 'current' or 'voltage'"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
 def test_custom_capabilities_are_accepted(tmp_path):
     sequence = _write_sequence(
         tmp_path,
