@@ -239,19 +239,17 @@ def test_invalid_channel_rejected_via_capabilities(tmp_path):
         validate_measurement_sequence(sequence, _contact_map(), capabilities=InstrumentCapabilities(sources=("S1",), measure_channels=("M1", "M2")))
 
 
-def test_unsupported_voltage_sourcing_fails_during_validation(tmp_path):
+def test_source_quantity_voltage_fails_during_validate_measurement_sequence(tmp_path):
     sequence = _write_sequence(
         tmp_path,
         {
             "name": "demo",
             "defaults": {
-                "source_mode": "ac",
+                "source_mode": "dc",
                 "source_quantity": "voltage",
                 "source": "S1",
                 "measure_channel": "M1",
                 "source_value": 1e-3,
-                "frequency_hz": 13.7,
-                "harmonic": 1,
             },
             "steps": [{"name": "bad", "state": "I_AB_V_CD"}],
         },
