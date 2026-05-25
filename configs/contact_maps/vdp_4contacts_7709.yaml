@@ -14,6 +14,18 @@ instruments:
     row_lo: 6
     instrument: M81:M1
 states:
+  I_AB_V_DC:
+    type: resistance
+    group: vdp_longitudinal
+    current: [A, B]
+    voltage: [D, C]
+    reciprocal: I_DC_V_AB
+    reverse_current: I_BA_V_DC
+  I_BA_V_DC:
+    type: resistance
+    group: vdp
+    current: [B, A]
+    voltage: [D, C]
   I_AB_V_CD:
     type: resistance
     group: vdp
@@ -26,6 +38,18 @@ states:
     group: vdp
     current: [B, A]
     voltage: [C, D]
+  I_BC_V_AD:
+    type: resistance
+    group: vdp_longitudinal_anisotropy
+    current: [B, C]
+    voltage: [A, D]
+    reciprocal: I_AD_V_BC
+    reverse_current: I_CB_V_AD
+  I_CB_V_AD:
+    type: resistance
+    group: vdp
+    current: [C, B]
+    voltage: [A, D]
   I_CD_V_AB:
     type: resistance
     group: vdp
@@ -35,9 +59,10 @@ states:
     reverse_current: I_DC_V_AB
   I_DC_V_AB:
     type: resistance
-    group: vdp
+    group: vdp_reciprocal
     current: [D, C]
     voltage: [A, B]
+    reciprocal: I_AB_V_DC
   I_BC_V_DA:
     type: resistance
     group: vdp
@@ -50,4 +75,21 @@ states:
     current: [D, A]
     voltage: [B, C]
     reciprocal: I_BC_V_DA
-
+  I_AD_V_BC:
+    type: resistance
+    group: vdp_anisotropy_reciprocal
+    current: [A, D]
+    voltage: [B, C]
+    reciprocal: I_BC_V_AD
+  I_AC_V_BD:
+    type: hall
+    group: vdp_hall
+    current: [A, C]
+    voltage: [B, D]
+    reciprocal: I_BD_V_AC
+  I_BD_V_AC:
+    type: hall
+    group: vdp_hall
+    current: [B, D]
+    voltage: [A, C]
+    reciprocal: I_AC_V_BD

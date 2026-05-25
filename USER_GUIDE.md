@@ -48,6 +48,7 @@ A contact map defines how logical sample contacts map onto relay channels and me
 Examples:
 
 - Hall bar: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_7709.yaml)
+- Hall bar, static wiring: [configs/contact_maps/hallbar_6contacts_static.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_static.yaml)
 - Van der Pauw: [configs/contact_maps/vdp_4contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/vdp_4contacts_7709.yaml)
 - Second harmonic: [configs/contact_maps/second_harmonic_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/second_harmonic_7709.yaml)
 
@@ -300,25 +301,95 @@ Sequence examples:
 
 - [configs/sequences/vdp_ac_reciprocity.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_ac_reciprocity.yaml)
 - [configs/sequences/vdp_dc_reverse_bias.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_dc_reverse_bias.yaml)
+- [configs/sequences/vdp_full_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_full_ac.yaml)
+- [configs/sequences/vdp_full_dc.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_full_dc.yaml)
+- [configs/sequences/vdp_fast_hall_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_fast_hall_ac.yaml)
+- [configs/sequences/vdp_hall_second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_hall_second_harmonic_ac.yaml)
+- [configs/sequences/vdp_reciprocity_check.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_reciprocity_check.yaml)
+- [configs/sequences/vdp_hall_with_drift_guard.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_hall_with_drift_guard.yaml)
+- [configs/sequences/vdp_lockin_phase_diagnostic.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_lockin_phase_diagnostic.yaml)
 - [configs/sequences/hallbar_ac_rxx_rxy.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_ac_rxx_rxy.yaml)
+- [configs/sequences/hallbar_static_1w_2w.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_static_1w_2w.yaml)
+- [configs/sequences/hallbar_static_fast.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_static_fast.yaml)
+- [configs/sequences/hallbar_static_drift_guard.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_static_drift_guard.yaml)
 - [configs/sequences/second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_ac.yaml)
+- [configs/sequences/second_harmonic_frequency_check.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_frequency_check.yaml)
 - [configs/sequences/example_hallbar_dc_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_hallbar_dc_sequence.yaml)
 - [configs/sequences/example_second_harmonic_ac_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_second_harmonic_ac_sequence.yaml)
 
 Important distinctions:
 
-- Sequence steps now describe `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, `repeats`, `settle_s`, and `reverse_policy`
+- Sequence steps now describe `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, `repeats`, `settle_s`, `reverse_policy`, optional per-channel `measure_specs`, and `matrix_policy`
 - `source_quantity: current` is currently the only hardware-supported sourcing mode
-- In DC, reverse bias must keep the same relay state and reverse only the current polarity; use `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
-- In AC/lock-in, `reverse_policy: auto` resolves to a single measurement; no automatic reverse state is generated, and ordinary AC lock-in work normally does not need reverse bias
+- For Van der Pauw, contacts `A/B/C/D` are assumed clockwise. The standard families are anisotropy (`AB-DC`, `BC-AD`), reciprocity (`DC-AB`, `AD-BC`), and Hall (`AC-BD`, `BD-AC`)
+- For the static Hall bar presets, contacts `A/B/C/D/E/F` are assumed clockwise. `A-D` is the current pair, `B-C` the primary longitudinal pair, and `C-E` the primary Hall pair
+- In DC, reverse bias must keep the same relay state and reverse only the current polarity; use `reverse_policy: auto` or `reverse_policy: dc_source_inversion`. `auto` resolves to `dc_source_inversion`
+- In AC/lock-in, `reverse_policy: auto` resolves to `none`; no automatic reverse state is generated, and ordinary AC lock-in work normally does not need reverse bias
 - `reverse_current` contact-map relations are treated as explicit diagnostic helpers only and are not used automatically for reverse bias
-- reciprocity means a different matrix state with current and voltage pairs exchanged
+- reciprocity means a different matrix state with current and voltage pairs exchanged, anisotropy compares the orthogonal longitudinal families, and Hall uses the diagonal pairings
+- `measure_specs` lets one step configure `M1`, `M2`, and `M3` independently, including different harmonics in the same AC step
+- `matrix_policy: none` disables active calls to `Matrix7709.apply_state()` and is intended for statically wired geometries such as a Hall bar already patched externally
+- complete sequences are intended for reference measurements, fast sequences for long sweeps, and diagnostic sequences for reciprocity, drift, phase, or frequency checks
 - magnetic-field reversal is handled by the outer field loop
 - temperature sweeps and ramps are handled by the outer environment loop
 - all relay switching still goes through `Matrix7709.apply_state()`
 - `Matrix7709.apply_state()` always disables sources before switching and never re-enables arbitrary M81 sources
-- sequence dry-run previews show resolved relay channels, excitation parameters, resolved bias points, outputs, repeats, tags, and reciprocity links without touching hardware
+- sequence dry-run previews show resolved relay channels, excitation parameters, resolved bias points, outputs, repeats, tags, reciprocity links, and clearly mark `no matrix switching` steps without touching hardware
 - legacy protocol implementations keep working as compatibility paths
+
+Per-channel `measure_specs` example:
+
+```yaml
+measure_specs:
+  M1:
+    measure_mode: lockin
+    harmonic: 1
+    readout: x
+    output: rxx_1w_ohm
+    transform: lockin_x_over_current
+  M2:
+    measure_mode: lockin
+    harmonic: 2
+    readout: x
+    output: rxy_2w_ohm
+    transform: lockin_x_over_current
+```
+
+Static Hall-bar example without active matrix switching:
+
+```yaml
+contact_map: configs/contact_maps/hallbar_6contacts_static.yaml
+defaults:
+  source_mode: ac
+  source: S1
+  current_rms_a: 1.0e-5
+  frequency_hz: 13.7
+  matrix_policy: none
+steps:
+  - name: ad_bc_ce_second_harmonic
+    state: static_ad_bc_ce
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: rxx_1w_ohm
+        transform: lockin_x_over_current
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: rxy_2w_ohm
+        transform: lockin_x_over_current
+```
+
+Recommended use during long field or temperature sweeps:
+
+1. Use `vdp_fast_hall_ac` or `hallbar_static_fast` for the main sweep to minimize dwell time.
+2. Add `vdp_hall_with_drift_guard` or `hallbar_static_drift_guard` when you need periodic reference repeats.
+3. Run `vdp_full_ac`, `vdp_full_dc`, or `vdp_reciprocity_check` before and after a campaign to quantify reciprocity and anisotropy drift.
+4. Use `vdp_lockin_phase_diagnostic` when lock-in phase alignment is suspect.
+5. Use `second_harmonic_frequency_check` when a 2w signal may depend on excitation frequency.
 
 Typical workflow:
 

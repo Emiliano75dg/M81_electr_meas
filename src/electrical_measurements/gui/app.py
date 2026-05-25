@@ -27,6 +27,7 @@ from ..runners.run_measurement import (
 from ..instruments.teslatron_client import environment_mode_from_config
 from ..protocols.vdp_hall import default_vdp_hall_states
 from ..sequences import (
+    load_measurement_sequence,
     SequenceRunner,
     measurement_sequence_from_dict,
     measurement_sequence_to_dict,
@@ -47,6 +48,105 @@ LIVE_PLOT_Y_COLUMNS = ["x", "y", "r", "theta_deg", "value", "x_dual", "r_dual"]
 SEQUENCE_EXCITATION_MODES = ["dc", "ac"]
 SEQUENCE_SOURCES = ["", "S1", "S2", "S3"]
 SEQUENCE_MEASURE_CHANNELS = ["", "M1", "M2", "M3"]
+SEQUENCE_PRESET_CATEGORIES = {
+    "Van der Pauw": [
+        "vdp_full_ac",
+        "vdp_full_dc",
+        "vdp_fast_hall_ac",
+        "vdp_hall_second_harmonic_ac",
+        "vdp_reciprocity_check",
+        "vdp_hall_with_drift_guard",
+        "vdp_lockin_phase_diagnostic",
+    ],
+    "Hall bar": [
+        "hallbar_static_1w_2w",
+        "hallbar_static_fast",
+        "hallbar_static_drift_guard",
+    ],
+    "Diagnostics": [
+        "second_harmonic_frequency_check",
+    ],
+}
+SEQUENCE_PRESET_PATHS = {
+    "vdp_full_ac": "configs/sequences/vdp_full_ac.yaml",
+    "vdp_full_dc": "configs/sequences/vdp_full_dc.yaml",
+    "vdp_fast_hall_ac": "configs/sequences/vdp_fast_hall_ac.yaml",
+    "vdp_hall_second_harmonic_ac": "configs/sequences/vdp_hall_second_harmonic_ac.yaml",
+    "vdp_reciprocity_check": "configs/sequences/vdp_reciprocity_check.yaml",
+    "vdp_hall_with_drift_guard": "configs/sequences/vdp_hall_with_drift_guard.yaml",
+    "vdp_lockin_phase_diagnostic": "configs/sequences/vdp_lockin_phase_diagnostic.yaml",
+    "hallbar_static_1w_2w": "configs/sequences/hallbar_static_1w_2w.yaml",
+    "hallbar_static_fast": "configs/sequences/hallbar_static_fast.yaml",
+    "hallbar_static_drift_guard": "configs/sequences/hallbar_static_drift_guard.yaml",
+    "second_harmonic_frequency_check": "configs/sequences/second_harmonic_frequency_check.yaml",
+}
+
+
+def sequence_preset_names_for_category(category: str) -> list[str]:
+    return list(SEQUENCE_PRESET_CATEGORIES.get(category, []))
+
+
+def describe_sequence_preset(preset_name: str) -> dict[str, object]:
+    path = SEQUENCE_PRESET_PATHS[preset_name]
+    sequence = load_measurement_sequence(path)
+    channels: set[str] = set()
+    harmonics: set[int] = set()
+    features: set[str] = set()
+    uses_matrix = str(sequence.defaults.matrix_policy).strip().lower() != "none"
+    for step in sequence.steps:
+        if step.measure_channel:
+            channels.add(step.measure_channel)
+        for channel in step.measure_channels or []:
+            channels.add(channel)
+        if step.measure_specs:
+            channels.update(step.measure_specs)
+            for spec in step.measure_specs.values():
+                if spec.harmonic is not None:
+                    harmonics.add(int(spec.harmonic))
+                if "theta" in spec.readout or "y" in spec.readout or "r" in spec.readout:
+                    features.add("phase")
+                if spec.harmonic == 2:
+                    features.add("second_harmonic")
+        elif step.harmonic is not None:
+            harmonics.add(int(step.harmonic))
+        if (step.reciprocal_step_of or ""):
+            features.add("reciprocity")
+        if step.measure_kind in {"hall", "hall_1", "hall_2"} or "hall" in (step.tags or []):
+            features.add("hall")
+        if "drift_guard" in (step.tags or []) or "reference_repeat" in (step.tags or []):
+            features.add("drift_guard")
+        if str(step.matrix_policy or "").strip().lower() == "none":
+            uses_matrix = False
+    if not channels and sequence.defaults.measure_channel:
+        channels.add(sequence.defaults.measure_channel)
+    if not harmonics and sequence.defaults.harmonic is not None:
+        harmonics.add(int(sequence.defaults.harmonic))
+    return {
+        "name": preset_name,
+        "description": sequence.description or "",
+        "steps": len(sequence.steps),
+        "channels": sorted(channels),
+        "harmonics": sorted(harmonics),
+        "switching": "matrix" if uses_matrix else "static wiring",
+        "features": sorted(features),
+        "path": path,
+    }
+
+
+def format_sequence_preset_summary(preset_name: str) -> str:
+    summary = describe_sequence_preset(preset_name)
+    return "\n".join(
+        [
+            f"Name: {summary['name']}",
+            f"Description: {summary['description']}",
+            f"Steps: {summary['steps']}",
+            f"Channels: {', '.join(summary['channels']) or '--'}",
+            f"Harmonics: {', '.join(str(value) for value in summary['harmonics']) or '--'}",
+            f"Switching: {summary['switching']}",
+            f"Features: {', '.join(summary['features']) or '--'}",
+            f"Path: {summary['path']}",
+        ]
+    )
 
 
 def empty_sequence_data(contact_map_path: str | None = None) -> dict[str, object]:
@@ -73,6 +173,7 @@ def empty_sequence_data(contact_map_path: str | None = None) -> dict[str, object
             "settle_s": 0.1,
             "repeats": 1,
             "reverse_policy": "none",
+            "matrix_policy": "apply_state",
             "lockin": True,
             "metadata": {},
         },
@@ -148,6 +249,29 @@ def sequence_step_table_row(step: dict[str, object], defaults: dict[str, object]
         if current_rms_a is None:
             current_rms_a = defaults.get("source_value", defaults.get("current_rms_a"))
         current_text = "" if current_rms_a is None else f"{float(current_rms_a):.6g}"
+    measure_specs = step.get("measure_specs")
+    def _format_channel_spec(channel: str) -> str:
+        if isinstance(measure_specs, dict) and isinstance(measure_specs.get(channel), dict):
+            spec = measure_specs[channel]
+            harmonic = spec.get("harmonic")
+            readout = spec.get("readout", "")
+            transform = spec.get("transform", "")
+            output = spec.get("output", "")
+            return "/".join(
+                part
+                for part in [
+                    str(harmonic) if harmonic not in (None, "") else "",
+                    str(readout),
+                    str(transform),
+                    str(output),
+                ]
+                if part
+            )
+        if channel in measure_channels:
+            harmonic_value = step.get("harmonic") if step.get("harmonic") is not None else defaults.get("harmonic")
+            readout_value = step.get("readout") if step.get("readout") is not None else defaults.get("readout") or "value"
+            return "/".join(part for part in [str(harmonic_value or ""), str(readout_value)] if part)
+        return ""
     return {
         "index": str(index + 1),
         "step_name": str(step.get("name", "")),
@@ -158,10 +282,14 @@ def sequence_step_table_row(step: dict[str, object], defaults: dict[str, object]
         "frequency_hz": str(step.get("frequency_hz") if step.get("frequency_hz") is not None else defaults.get("frequency_hz") or ""),
         "harmonic": str(step.get("harmonic") if step.get("harmonic") is not None else defaults.get("harmonic") or ""),
         "measure_channels": ",".join(measure_channels),
+        "m1_spec": _format_channel_spec("M1"),
+        "m2_spec": _format_channel_spec("M2"),
+        "m3_spec": _format_channel_spec("M3"),
         "outputs": format_outputs_mapping(step.get("outputs") if isinstance(step.get("outputs"), dict) else None),
         "settle_s": str(step.get("settle_s") if step.get("settle_s") is not None else defaults.get("settle_s") or ""),
         "repeats": str(step.get("repeats") if step.get("repeats") is not None else defaults.get("repeats") or ""),
         "reverse_policy": str(step.get("reverse_policy") or defaults.get("reverse_policy") or ""),
+        "matrix_policy": str(step.get("matrix_policy") or defaults.get("matrix_policy") or "apply_state"),
         "tags": stringify_step_tags(step),
         "reciprocal_step_of": str(step.get("reciprocal_step_of") or step.get("reciprocal_of") or ""),
         "relay_channels": relay_channels_for_state(contact_map, str(step.get("state", ""))),
@@ -185,7 +313,11 @@ def recommended_states_for_protocol(protocol: str, contact_map: ContactMap) -> l
         preferred = [name for name, state in states.items() if "voltage_longitudinal" in state or state.get("group") == "longitudinal"]
         return preferred or list(states.keys())
     if protocol == "vdp":
-        preferred = contact_map.get_states_for_group("vdp")
+        preferred = [
+            name
+            for name, state in contact_map.states.items()
+            if str(state.get("group", "")).startswith("vdp")
+        ]
         return preferred or list(states.keys())
     if protocol == "vdp_hall":
         preferred = default_vdp_hall_states(contact_map)
@@ -352,6 +484,22 @@ def format_measure_summary(measures: dict[str, object] | None) -> str:
     return f"Measures: {' | '.join(parts)}"
 
 
+def format_sequence_measure_spec(spec: dict[str, object] | None) -> str:
+    if not isinstance(spec, dict):
+        return ""
+    return " | ".join(
+        f"{label}={value}"
+        for label, value in [
+            ("mode", spec.get("measure_mode")),
+            ("harm", spec.get("harmonic")),
+            ("readout", spec.get("readout")),
+            ("transform", spec.get("transform")),
+            ("output", spec.get("output")),
+        ]
+        if value not in (None, "")
+    )
+
+
 def parse_required_float(value: str, name: str, *, positive: bool = False, non_negative: bool = False) -> float:
     try:
         parsed = float(value)
@@ -448,6 +596,8 @@ class MeasurementGUI:
         self.live_env_ramp_rate_var = tk.StringVar(value="60")
         self.status_var = tk.StringVar(value="Ready")
         self.sequence_path_var = tk.StringVar(value="")
+        self.sequence_preset_category_var = tk.StringVar(value="Van der Pauw")
+        self.sequence_preset_var = tk.StringVar(value="vdp_full_ac")
         self.sequence_name_var = tk.StringVar(value="new_sequence")
         self.sequence_description_var = tk.StringVar(value="")
         self.sequence_contact_map_var = tk.StringVar(value=self.contact_map_var.get())
@@ -481,6 +631,12 @@ class MeasurementGUI:
         self.sequence_step_tags_var = tk.StringVar(value="")
         self.sequence_step_reciprocal_var = tk.StringVar(value="")
         self.sequence_step_outputs_var = tk.StringVar(value="")
+        self.sequence_step_matrix_policy_var = tk.StringVar(value="apply_state")
+        self.sequence_measure_spec_mode_vars = {channel: tk.StringVar(value="") for channel in ["M1", "M2", "M3"]}
+        self.sequence_measure_spec_harmonic_vars = {channel: tk.StringVar(value="") for channel in ["M1", "M2", "M3"]}
+        self.sequence_measure_spec_readout_vars = {channel: tk.StringVar(value="") for channel in ["M1", "M2", "M3"]}
+        self.sequence_measure_spec_output_vars = {channel: tk.StringVar(value="") for channel in ["M1", "M2", "M3"]}
+        self.sequence_measure_spec_transform_vars = {channel: tk.StringVar(value="") for channel in ["M1", "M2", "M3"]}
         self.sequence_step_relay_var = tk.StringVar(value="")
         self.sequence_validation_var = tk.StringVar(value="Sequence not validated")
         self.live_temperature_var = tk.StringVar(value="T: --")
@@ -495,6 +651,7 @@ class MeasurementGUI:
         self.live_last_reading_var = tk.StringVar(value="Last reading: --")
 
         self._build_layout()
+        self._update_sequence_preset_choices()
         self._new_empty_sequence()
         self._sync_environment_mode_from_config()
         self._load_contact_map()
@@ -618,6 +775,17 @@ class MeasurementGUI:
         ttk.Entry(top, textvariable=self.sequence_path_var).grid(row=0, column=1, sticky="ew", padx=(8, 8))
         ttk.Button(top, text="Load Sequence YAML", command=self._load_sequence_yaml).grid(row=0, column=2, padx=(0, 6))
         ttk.Button(top, text="Save Sequence YAML", command=self._save_sequence_yaml).grid(row=0, column=3)
+        ttk.Label(top, text="Preset category").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        preset_category_combo = ttk.Combobox(top, textvariable=self.sequence_preset_category_var, values=list(SEQUENCE_PRESET_CATEGORIES), state="readonly")
+        preset_category_combo.grid(row=1, column=1, sticky="ew", padx=(8, 8), pady=(6, 0))
+        preset_category_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_sequence_preset_choices())
+        ttk.Label(top, text="Preset").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.sequence_preset_combo = ttk.Combobox(top, textvariable=self.sequence_preset_var, values=sequence_preset_names_for_category(self.sequence_preset_category_var.get()), state="readonly")
+        self.sequence_preset_combo.grid(row=2, column=1, sticky="ew", padx=(8, 8), pady=(6, 0))
+        self.sequence_preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_sequence_preset_summary())
+        ttk.Button(top, text="Load Preset", command=self._load_sequence_preset).grid(row=2, column=2, padx=(0, 6), pady=(6, 0))
+        self.sequence_preset_summary = tk.Text(top, height=7, wrap="word")
+        self.sequence_preset_summary.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
 
         split = ttk.Panedwindow(frame, orient="horizontal")
         split.grid(row=1, column=0, sticky="nsew")
@@ -654,9 +822,13 @@ class MeasurementGUI:
             "frequency_hz",
             "harmonic",
             "measure_channels",
+            "m1_spec",
+            "m2_spec",
+            "m3_spec",
             "outputs",
             "settle_s",
             "repeats",
+            "matrix_policy",
             "tags",
             "reciprocal_step_of",
             "relay_channels",
@@ -672,9 +844,13 @@ class MeasurementGUI:
             ("frequency_hz", "Freq", 80),
             ("harmonic", "Harm", 60),
             ("measure_channels", "Measure", 100),
+            ("m1_spec", "M1", 150),
+            ("m2_spec", "M2", 150),
+            ("m3_spec", "M3", 150),
             ("outputs", "Outputs", 130),
             ("settle_s", "Settle", 70),
             ("repeats", "Repeats", 70),
+            ("matrix_policy", "Matrix", 70),
             ("tags", "Tags", 120),
             ("reciprocal_step_of", "Reciprocal", 100),
             ("relay_channels", "Relays", 120),
@@ -738,10 +914,22 @@ class MeasurementGUI:
         self._sequence_add_editor_row(step_box, 14, "Tags", self.sequence_step_tags_var)
         self._sequence_add_editor_row(step_box, 15, "Reciprocal of", self.sequence_step_reciprocal_var)
         self._sequence_add_editor_row(step_box, 16, "Outputs", self.sequence_step_outputs_var)
-        ttk.Label(step_box, text="Relay channels").grid(row=17, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(step_box, textvariable=self.sequence_step_relay_var).grid(row=17, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self._sequence_add_editor_row(step_box, 17, "Matrix policy", self.sequence_step_matrix_policy_var, combo=["apply_state", "none"])
+        spec_row = 18
+        for offset, channel in enumerate(["M1", "M2", "M3"]):
+            base_row = spec_row + offset
+            ttk.Label(step_box, text=f"{channel} spec").grid(row=base_row, column=0, sticky="w", pady=3)
+            channel_frame = ttk.Frame(step_box)
+            channel_frame.grid(row=base_row, column=1, sticky="ew", padx=(8, 0), pady=3)
+            ttk.Entry(channel_frame, textvariable=self.sequence_measure_spec_mode_vars[channel], width=10).pack(side="left")
+            ttk.Entry(channel_frame, textvariable=self.sequence_measure_spec_harmonic_vars[channel], width=6).pack(side="left", padx=(4, 0))
+            ttk.Entry(channel_frame, textvariable=self.sequence_measure_spec_readout_vars[channel], width=8).pack(side="left", padx=(4, 0))
+            ttk.Entry(channel_frame, textvariable=self.sequence_measure_spec_transform_vars[channel], width=18).pack(side="left", padx=(4, 0))
+            ttk.Entry(channel_frame, textvariable=self.sequence_measure_spec_output_vars[channel], width=18).pack(side="left", padx=(4, 0))
+        ttk.Label(step_box, text="Relay channels").grid(row=21, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(step_box, textvariable=self.sequence_step_relay_var).grid(row=21, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
         step_buttons = ttk.Frame(step_box)
-        step_buttons.grid(row=18, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        step_buttons.grid(row=22, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(step_buttons, text="Apply Step Changes", command=self._apply_sequence_step_editor).pack(side="left")
         ttk.Button(step_buttons, text="Validate Sequence", command=self._validate_sequence_from_gui).pack(side="left", padx=(6, 0))
         ttk.Button(step_buttons, text="Dry-run Preview", command=self._dry_run_sequence_from_gui).pack(side="left", padx=(6, 0))
@@ -1097,6 +1285,43 @@ class MeasurementGUI:
             self.sequence_preview_text.delete("1.0", "end")
             self.sequence_preview_text.insert("end", "Dry-run preview will appear here.\n")
 
+    def _load_sequence_preset(self) -> None:
+        preset_path = SEQUENCE_PRESET_PATHS.get(self.sequence_preset_var.get())
+        if not preset_path:
+            self.status_var.set("Unknown preset")
+            return
+        try:
+            self.sequence_data = measurement_sequence_to_dict(load_measurement_sequence(preset_path))
+            self.sequence_file_path = Path(preset_path)
+            self.sequence_path_var.set(preset_path)
+            self.sequence_validation_ok = False
+            self._sync_sequence_vars_from_data()
+            self._update_sequence_preset_summary()
+            self.status_var.set(f"Loaded preset {self.sequence_preset_var.get()}")
+        except Exception as exc:
+            self.sequence_validation_text.delete("1.0", "end")
+            self.sequence_validation_text.insert("end", f"Preset load failed: {exc}\n")
+            self.status_var.set("Preset load failed")
+
+    def _update_sequence_preset_choices(self) -> None:
+        preset_names = sequence_preset_names_for_category(self.sequence_preset_category_var.get())
+        self.sequence_preset_combo["values"] = preset_names
+        if preset_names and self.sequence_preset_var.get() not in preset_names:
+            self.sequence_preset_var.set(preset_names[0])
+        self._update_sequence_preset_summary()
+
+    def _update_sequence_preset_summary(self) -> None:
+        if not hasattr(self, "sequence_preset_summary"):
+            return
+        self.sequence_preset_summary.delete("1.0", "end")
+        preset_name = self.sequence_preset_var.get()
+        if not preset_name:
+            return
+        try:
+            self.sequence_preset_summary.insert("end", format_sequence_preset_summary(preset_name))
+        except Exception as exc:
+            self.sequence_preset_summary.insert("end", f"Preset summary unavailable: {exc}")
+
     def _sync_sequence_vars_from_data(self) -> None:
         data = self.sequence_data
         defaults = data.get("defaults", {})
@@ -1104,7 +1329,7 @@ class MeasurementGUI:
         self.sequence_description_var.set(str(data.get("description", "")))
         self.sequence_contact_map_var.set(str(data.get("contact_map", self.contact_map_var.get()) or self.contact_map_var.get()))
         self.sequence_expert_mode_var.set(bool(data.get("expert_mode", False)))
-        self.sequence_default_mode_var.set(str(defaults.get("excitation_mode", "ac")))
+        self.sequence_default_mode_var.set(str(defaults.get("source_mode") or defaults.get("excitation_mode") or "ac"))
         self.sequence_default_source_var.set(str(defaults.get("source", "S1") or ""))
         self.sequence_default_measure_channel_var.set(str(defaults.get("measure_channel", "") or ""))
         self.sequence_default_measure_channels_var.set(",".join(defaults.get("measure_channels", []) or []))
@@ -1130,6 +1355,7 @@ class MeasurementGUI:
             "harmonic": int(self.sequence_default_harmonic_var.get()) if self.sequence_default_harmonic_var.get().strip() else None,
             "settle_s": float(self.sequence_default_settle_var.get() or 0.0),
             "repeats": int(self.sequence_default_repeats_var.get() or 1),
+            "matrix_policy": "apply_state",
             "lockin": bool(self.sequence_default_lockin_var.get()),
             "metadata": {},
         }
@@ -1184,6 +1410,8 @@ class MeasurementGUI:
             "tags": [],
             "reciprocal_step_of": "",
             "outputs": {},
+            "measure_specs": None,
+            "matrix_policy": None,
             "metadata": {},
         }
         self.sequence_data["steps"].append(step)
@@ -1224,13 +1452,20 @@ class MeasurementGUI:
             self.sequence_step_tags_var.set("")
             self.sequence_step_reciprocal_var.set("")
             self.sequence_step_outputs_var.set("")
+            self.sequence_step_matrix_policy_var.set("apply_state")
+            for channel in ["M1", "M2", "M3"]:
+                self.sequence_measure_spec_mode_vars[channel].set("")
+                self.sequence_measure_spec_harmonic_vars[channel].set("")
+                self.sequence_measure_spec_readout_vars[channel].set("")
+                self.sequence_measure_spec_transform_vars[channel].set("")
+                self.sequence_measure_spec_output_vars[channel].set("")
             self.sequence_step_relay_var.set("")
             self._update_sequence_step_mode_fields()
             return
         step = steps[index]
         self.sequence_step_name_var.set(str(step.get("name", "")))
         self.sequence_step_state_var.set(str(step.get("state", "")))
-        self.sequence_step_mode_var.set(str(step.get("excitation_mode") or self.sequence_default_mode_var.get() or "ac"))
+        self.sequence_step_mode_var.set(str(step.get("source_mode") or step.get("excitation_mode") or self.sequence_default_mode_var.get() or "ac"))
         self.sequence_step_source_var.set(str(step.get("source") or ""))
         self.sequence_step_measure_channel_var.set(str(step.get("measure_channel") or ""))
         self.sequence_step_measure_channels_var.set(",".join(step.get("measure_channels", []) or []))
@@ -1245,6 +1480,17 @@ class MeasurementGUI:
         self.sequence_step_tags_var.set(",".join(step.get("tags", []) or []))
         self.sequence_step_reciprocal_var.set(str(step.get("reciprocal_step_of") or step.get("reciprocal_of") or ""))
         self.sequence_step_outputs_var.set(format_outputs_mapping(step.get("outputs") if isinstance(step.get("outputs"), dict) else None))
+        self.sequence_step_matrix_policy_var.set(
+            str(step.get("matrix_policy") or self.sequence_data.get("defaults", {}).get("matrix_policy") or "apply_state")
+        )
+        measure_specs = step.get("measure_specs", {})
+        for channel in ["M1", "M2", "M3"]:
+            spec = measure_specs.get(channel, {}) if isinstance(measure_specs, dict) else {}
+            self.sequence_measure_spec_mode_vars[channel].set(str(spec.get("measure_mode", "")))
+            self.sequence_measure_spec_harmonic_vars[channel].set("" if spec.get("harmonic") is None else str(spec.get("harmonic")))
+            self.sequence_measure_spec_readout_vars[channel].set(str(spec.get("readout", "")))
+            self.sequence_measure_spec_transform_vars[channel].set(str(spec.get("transform", "")))
+            self.sequence_measure_spec_output_vars[channel].set(str(spec.get("output", "")))
         self._update_sequence_relay_preview()
         self._update_sequence_step_mode_fields()
 
@@ -1290,6 +1536,24 @@ class MeasurementGUI:
             step["reciprocal_step_of"] = self.sequence_step_reciprocal_var.get().strip() or None
             step["reciprocal_of"] = None
             step["outputs"] = parse_csv_mapping(self.sequence_step_outputs_var.get()) if self.sequence_step_outputs_var.get().strip() else {}
+            step["matrix_policy"] = self.sequence_step_matrix_policy_var.get().strip() or None
+            measure_specs: dict[str, dict[str, object]] = {}
+            for channel in ["M1", "M2", "M3"]:
+                mode_value = self.sequence_measure_spec_mode_vars[channel].get().strip()
+                harmonic_value = self.sequence_measure_spec_harmonic_vars[channel].get().strip()
+                readout_value = self.sequence_measure_spec_readout_vars[channel].get().strip()
+                transform_value = self.sequence_measure_spec_transform_vars[channel].get().strip()
+                output_value = self.sequence_measure_spec_output_vars[channel].get().strip()
+                if not any([mode_value, harmonic_value, readout_value, transform_value, output_value]):
+                    continue
+                measure_specs[channel] = {
+                    "measure_mode": mode_value or ("dc" if mode == "dc" else "lockin"),
+                    "harmonic": int(harmonic_value) if harmonic_value else None,
+                    "readout": readout_value or ("value" if mode == "dc" else "x"),
+                    "transform": transform_value or None,
+                    "output": output_value or None,
+                }
+            step["measure_specs"] = measure_specs or None
             self._refresh_sequence_table()
             self._update_sequence_relay_preview()
             self.sequence_validation_ok = False
@@ -1318,6 +1582,8 @@ class MeasurementGUI:
         step["tags"] = list(step.get("tags", []) or [])
         step["measure_channels"] = list(step.get("measure_channels", []) or [])
         step["outputs"] = dict(step.get("outputs", {}) or {})
+        if isinstance(step.get("measure_specs"), dict):
+            step["measure_specs"] = {channel: dict(spec or {}) for channel, spec in step["measure_specs"].items()}
         self.sequence_data["steps"].insert(index + 1, step)
         self._refresh_sequence_table()
 

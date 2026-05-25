@@ -1,0 +1,28 @@
+name: vdp_lockin_phase_diagnostic
+description: Minimal Van der Pauw phase diagnostic capturing all first-harmonic lock-in quadratures
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  source_mode: ac
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  measure_channel: M1
+  current_rms_a: 1.0e-5
+  source_value: 1.0e-5
+  frequency_hz: 13.7
+  harmonic: 1
+  measure_mode: lockin
+  readout: [x, y, r, theta]
+  settle_s: 0.1
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: apply_state
+  lockin: true
+steps:
+  - name: ab_dc_phase
+    state: I_AB_V_DC
+    tags: [vdp, diagnostic, phase]
+  - name: ac_bd_phase
+    state: I_AC_V_BD
+    measure_kind: hall_1
+    tags: [vdp, diagnostic, phase]

@@ -226,6 +226,70 @@ def test_step_level_overrides_work(tmp_path):
     assert resolved[0].repeats == 3
 
 
+def test_measure_specs_allow_mixed_harmonics_in_ac_step():
+    sequence = load_measurement_sequence("configs/sequences/vdp_hall_second_harmonic_ac.yaml")
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    first = resolved[0]
+    assert first.measure_specs["M1"].harmonic == 1
+    assert first.measure_specs["M2"].harmonic == 2
+    assert first.measure_channels == ("M1", "M2")
+
+
+def test_reject_dc_measure_specs_with_harmonic(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "dc_bad_specs",
+            "defaults": {"source_mode": "dc", "source": "S1", "measure_channel": "M1", "source_value": 1e-5},
+            "steps": [
+                {
+                    "name": "bad",
+                    "state": "I_AB_V_CD",
+                    "measure_specs": {
+                        "M1": {
+                            "measure_mode": "dc",
+                            "harmonic": 2,
+                            "readout": "value",
+                            "output": "raw_value",
+                            "transform": "raw",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    with pytest.raises(SequenceValidationError, match="incompatible with dc source_mode"):
+        validate_measurement_sequence(sequence, _contact_map())
+
+
+def test_new_standard_sequence_files_validate():
+    cases = [
+        ("configs/sequences/vdp_full_ac.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 6),
+        ("configs/sequences/vdp_full_dc.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 6),
+        ("configs/sequences/vdp_fast_hall_ac.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 4),
+        ("configs/sequences/vdp_hall_second_harmonic_ac.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 4),
+        ("configs/sequences/vdp_reciprocity_check.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 4),
+        ("configs/sequences/vdp_hall_with_drift_guard.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 5),
+        ("configs/sequences/vdp_lockin_phase_diagnostic.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 2),
+        ("configs/sequences/hallbar_static_1w_2w.yaml", "configs/contact_maps/hallbar_6contacts_static.yaml", 2),
+        ("configs/sequences/hallbar_static_fast.yaml", "configs/contact_maps/hallbar_6contacts_static.yaml", 1),
+        ("configs/sequences/hallbar_static_drift_guard.yaml", "configs/contact_maps/hallbar_6contacts_static.yaml", 3),
+        ("configs/sequences/second_harmonic_frequency_check.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml", 3),
+    ]
+    for sequence_path, contact_map_path, expected_steps in cases:
+        resolved = validate_measurement_sequence(
+            load_measurement_sequence(sequence_path),
+            ContactMap.from_yaml(contact_map_path),
+        )
+        assert len(resolved) == expected_steps
+
+
+def test_phase_diagnostic_accepts_multi_readout_string():
+    sequence = load_measurement_sequence("configs/sequences/vdp_lockin_phase_diagnostic.yaml")
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    assert resolved[0].readout == "x,y,r,theta"
+
+
 def test_invalid_channel_rejected_via_capabilities(tmp_path):
     sequence = _write_sequence(
         tmp_path,

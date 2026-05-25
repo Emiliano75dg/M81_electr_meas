@@ -8,6 +8,18 @@ from ..records import OutputSpec
 
 
 @dataclass(frozen=True)
+class ChannelMeasureSpec:
+    measure_mode: str
+    harmonic: int | None = None
+    readout: str = "value"
+    output: str | None = None
+    transform: str | None = None
+    time_constant_s: float | None = None
+    rolloff: str | None = None
+    nplc: float | None = None
+
+
+@dataclass(frozen=True)
 class SequenceDefaults:
     source_mode: str
     source_quantity: str = "current"
@@ -25,9 +37,11 @@ class SequenceDefaults:
     time_constant_s: float | None = None
     nplc: float | None = None
     rolloff: str | None = None
+    measure_specs: dict[str, ChannelMeasureSpec] | None = None
     settle_s: float = 0.0
     repeats: int = 1
     reverse_policy: str = "none"
+    matrix_policy: str = "apply_state"
     notes: str | None = None
     lockin: bool | None = None
     metadata: dict[str, Any] | None = None
@@ -64,10 +78,13 @@ class MeasurementStep:
     time_constant_s: float | None = None
     nplc: float | None = None
     rolloff: str | None = None
+    measure_specs: dict[str, ChannelMeasureSpec] | None = None
     reverse_policy: str | None = None
+    matrix_policy: str | None = None
     diagnostic_state: str | None = None
     measure_kind: str | None = None
     tags: list[str] | None = None
+    repeat_of: str | None = None
     reciprocity_partner: str | None = None
     reciprocal_step_of: str | None = None
     reciprocal_of: str | None = None
@@ -120,9 +137,11 @@ class ResolvedSequenceStep:
     time_constant_s: float | None
     nplc: float | None
     rolloff: str | None
+    measure_specs: dict[str, ChannelMeasureSpec]
     settle_s: float
     repeats: int
     reverse_policy: str
+    matrix_policy: str
     diagnostic_state: str | None
     lockin: bool | None
     measure_kind: str | None

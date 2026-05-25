@@ -111,3 +111,36 @@ def test_save_and_reload_roundtrip(tmp_path: Path):
     save_measurement_sequence(original, path)
     reloaded = load_measurement_sequence(path)
     assert measurement_sequence_to_dict(reloaded) == measurement_sequence_to_dict(original)
+
+
+def test_load_new_sequence_files():
+    for path in [
+        "configs/sequences/vdp_full_ac.yaml",
+        "configs/sequences/vdp_full_dc.yaml",
+        "configs/sequences/vdp_fast_hall_ac.yaml",
+        "configs/sequences/vdp_hall_second_harmonic_ac.yaml",
+        "configs/sequences/vdp_reciprocity_check.yaml",
+        "configs/sequences/vdp_hall_with_drift_guard.yaml",
+        "configs/sequences/vdp_lockin_phase_diagnostic.yaml",
+        "configs/sequences/hallbar_static_1w_2w.yaml",
+        "configs/sequences/hallbar_static_fast.yaml",
+        "configs/sequences/hallbar_static_drift_guard.yaml",
+        "configs/sequences/second_harmonic_frequency_check.yaml",
+    ]:
+        sequence = load_measurement_sequence(path)
+        assert sequence.steps
+
+
+def test_roundtrip_sequence_with_measure_specs():
+    original = load_measurement_sequence("configs/sequences/vdp_hall_second_harmonic_ac.yaml")
+    payload = measurement_sequence_to_dict(original)
+    rebuilt = measurement_sequence_from_dict(payload)
+    assert rebuilt.steps[0].measure_specs is not None
+    assert rebuilt.steps[0].measure_specs["M2"].harmonic == 2
+
+
+def test_sequence_with_repeat_of_roundtrips():
+    original = load_measurement_sequence("configs/sequences/vdp_hall_with_drift_guard.yaml")
+    payload = measurement_sequence_to_dict(original)
+    rebuilt = measurement_sequence_from_dict(payload)
+    assert rebuilt.steps[-1].repeat_of == "ab_dc"

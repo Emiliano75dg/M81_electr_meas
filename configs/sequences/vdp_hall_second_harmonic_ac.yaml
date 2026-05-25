@@ -1,0 +1,71 @@
+name: vdp_hall_second_harmonic_ac
+description: Van der Pauw AC sequence with simultaneous first- and second-harmonic readout
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  source_mode: ac
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  current_rms_a: 1.0e-5
+  source_value: 1.0e-5
+  frequency_hz: 13.7
+  settle_s: 0.1
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: apply_state
+  lockin: true
+steps:
+  - name: ab_dc_dual_harmonic
+    state: I_AB_V_DC
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_ab_dc_1w
+        transform: lockin_x_over_current
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: v_ab_dc_2w
+        transform: raw
+    tags: [vdp, hall, second_harmonic]
+  - name: bc_ad_dual_harmonic
+    state: I_BC_V_AD
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_bc_ad_1w
+        transform: lockin_x_over_current
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: v_bc_ad_2w
+        transform: raw
+    tags: [vdp, hall, second_harmonic]
+  - name: ac_bd_hall_1
+    state: I_AC_V_BD
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_ac_bd_1w
+        transform: lockin_x_over_current
+    measure_kind: hall_1
+    tags: [vdp, hall]
+  - name: bd_ac_hall_2
+    state: I_BD_V_AC
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_bd_ac_1w
+        transform: lockin_x_over_current
+    measure_kind: hall_2
+    tags: [vdp, hall]

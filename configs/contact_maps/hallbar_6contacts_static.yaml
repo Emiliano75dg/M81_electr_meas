@@ -1,0 +1,34 @@
+name: hallbar_6contacts_static
+contacts:
+  A: {column: 1}
+  B: {column: 2}
+  C: {column: 3}
+  D: {column: 4}
+  E: {column: 5}
+  F: {column: 6}
+instruments:
+  current_source:
+    row_hi: 3
+    row_lo: 4
+    instrument: M81:S1
+  vxx_meter:
+    row_hi: 5
+    row_lo: 6
+    instrument: M81:M1
+  vxy_meter:
+    row_hi: 1
+    row_lo: 2
+    instrument: M81:M2
+states:
+  static_ad_bc_ce:
+    type: hallbar
+    group: static_hallbar
+    source:
+      S1: [A, D]
+    measures:
+      M1: [B, C]
+      M2: [C, E]
+    current: [A, D]
+    voltage_longitudinal: [B, C]
+    voltage_transverse: [C, E]
+    relay_channels: []

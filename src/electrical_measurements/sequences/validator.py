@@ -9,7 +9,7 @@ from ..excitation import validate_ac_excitation, validate_dc_excitation
 from ..records import normalize_output_mapping
 from ..switching.contact_map import ContactMap
 from ..switching.safety import validate_contact_map_state
-from .schema import BiasPoint, MeasurementSequence, ResolvedSequenceStep, SequenceDefaults, SequenceStep
+from .schema import BiasPoint, ChannelMeasureSpec, MeasurementSequence, ResolvedSequenceStep, SequenceDefaults, SequenceStep
 
 LOGGER = logging.getLogger(__name__)
 
@@ -74,9 +74,13 @@ def _validate_measure_mode(value: str | None, *, source_mode: str, harmonic: int
 
 def _resolve_readout(value: str | None) -> str:
     normalized = str(value or "value").strip().lower()
-    if normalized not in {"value", "x", "y", "r", "theta"}:
+    parts = [part.strip() for part in normalized.split(",") if part.strip()]
+    if not parts:
+        raise SequenceValidationError("readout must not be empty")
+    invalid = [part for part in parts if part not in {"value", "x", "y", "r", "theta"}]
+    if invalid:
         raise SequenceValidationError("readout must be one of 'value', 'x', 'y', 'r', 'theta'")
-    return normalized
+    return ",".join(parts)
 
 
 def _resolve_reverse_policy(value: str | None, *, source_mode: str) -> str:
@@ -127,6 +131,13 @@ def _validate_measure_channels(channels: list[str], context: str, capabilities: 
     return channels
 
 
+def _resolve_matrix_policy(value: str | None, *, context: str) -> str:
+    normalized = str(value or "apply_state").strip().lower()
+    if normalized not in {"apply_state", "none"}:
+        raise SequenceValidationError(f"{context} must be 'apply_state' or 'none'")
+    return normalized
+
+
 def _resolve_source_channel(step: SequenceStep, defaults: SequenceDefaults, capabilities: InstrumentCapabilities) -> str:
     return _validate_source(
         step.source_channel or step.source or defaults.source_channel or defaults.source,
@@ -156,6 +167,14 @@ def _resolve_source_value(step: SequenceStep, defaults: SequenceDefaults, *, sou
     return value
 
 
+def _merge_measure_specs(defaults: SequenceDefaults, step: SequenceStep) -> dict[str, ChannelMeasureSpec] | None:
+    if step.measure_specs is not None:
+        return dict(step.measure_specs)
+    if defaults.measure_specs is not None:
+        return dict(defaults.measure_specs)
+    return None
+
+
 def _normalize_reciprocity(step: SequenceStep) -> tuple[str | None, list[str]]:
     warnings: list[str] = []
     if step.reciprocal_step_of and step.reciprocal_of and step.reciprocal_step_of != step.reciprocal_of:
@@ -168,6 +187,80 @@ def _normalize_reciprocity(step: SequenceStep) -> tuple[str | None, list[str]]:
         LOGGER.warning(warning)
         warnings.append(warning)
     return reciprocal_step_of, warnings
+
+
+def _validate_measure_specs(
+    *,
+    measure_specs: dict[str, ChannelMeasureSpec] | None,
+    measure_channels: list[str],
+    source_mode: str,
+    step: SequenceStep,
+    defaults: SequenceDefaults,
+    capabilities: InstrumentCapabilities,
+) -> tuple[list[str], dict[str, ChannelMeasureSpec], dict[str, dict[str, str]]]:
+    if not measure_specs:
+        channels = _validate_measure_channels(measure_channels, f"Step '{step.name}'", capabilities)
+        resolved_harmonic = step.harmonic if step.harmonic is not None else defaults.harmonic
+        resolved_measure_mode = _validate_measure_mode(
+            step.measure_mode or defaults.measure_mode,
+            source_mode=source_mode,
+            harmonic=int(resolved_harmonic) if resolved_harmonic is not None else None,
+            context=f"Step '{step.name}' measure_mode",
+        )
+        resolved_readout = _resolve_readout(step.readout or defaults.readout)
+        resolved_spec = ChannelMeasureSpec(
+            measure_mode=resolved_measure_mode,
+            harmonic=int(resolved_harmonic) if resolved_harmonic is not None else None,
+            readout=resolved_readout,
+            output=None,
+            transform=None,
+            time_constant_s=step.time_constant_s if step.time_constant_s is not None else defaults.time_constant_s,
+            rolloff=step.rolloff if step.rolloff is not None else defaults.rolloff,
+            nplc=step.nplc if step.nplc is not None else defaults.nplc,
+        )
+        return channels, {channel: resolved_spec for channel in channels}, {}
+
+    channels = _validate_measure_channels(list(measure_specs), f"Step '{step.name}' measure_specs", capabilities)
+    outputs_from_specs: dict[str, dict[str, str]] = {}
+    resolved_specs: dict[str, ChannelMeasureSpec] = {}
+    for channel, raw_spec in measure_specs.items():
+        if channel not in capabilities.measure_channels:
+            raise SequenceValidationError(f"Step '{step.name}' measure_specs contains unknown M81 measurement channel '{channel}'")
+        harmonic = raw_spec.harmonic
+        if harmonic is not None and int(harmonic) < 1:
+            raise SequenceValidationError(f"Step '{step.name}' measure_specs.{channel}.harmonic must be >= 1")
+        if source_mode == "dc" and raw_spec.harmonic is not None:
+            raise SequenceValidationError(
+                f"Step '{step.name}' measure_specs.{channel}.harmonic is incompatible with dc source_mode"
+            )
+        resolved_mode = _validate_measure_mode(
+            raw_spec.measure_mode,
+            source_mode=source_mode,
+            harmonic=int(harmonic) if harmonic is not None else None,
+            context=f"Step '{step.name}' measure_specs.{channel}.measure_mode",
+        )
+        resolved_readout = _resolve_readout(raw_spec.readout)
+        if source_mode == "dc":
+            if raw_spec.rolloff is not None or raw_spec.time_constant_s is not None:
+                raise SequenceValidationError(
+                    f"Step '{step.name}' measure_specs.{channel} lock-in fields are incompatible with dc source_mode"
+                )
+        resolved_specs[channel] = ChannelMeasureSpec(
+            measure_mode=resolved_mode,
+            harmonic=int(harmonic) if harmonic is not None else None,
+            readout=resolved_readout,
+            output=raw_spec.output,
+            transform=raw_spec.transform,
+            time_constant_s=raw_spec.time_constant_s,
+            rolloff=raw_spec.rolloff,
+            nplc=raw_spec.nplc,
+        )
+        if raw_spec.output:
+            output_spec = {"name": str(raw_spec.output)}
+            if raw_spec.transform:
+                output_spec["transform"] = str(raw_spec.transform)
+            outputs_from_specs[channel] = output_spec
+    return channels, resolved_specs, outputs_from_specs
 
 
 def resolve_step(
@@ -195,10 +288,14 @@ def resolve_step(
         f"Step '{step.name}' source_quantity",
     )
     source_channel = _resolve_source_channel(step, sequence.defaults, capabilities)
-    measure_channels = _validate_measure_channels(
-        _merged_measure_channels(sequence.defaults, step),
-        f"Step '{step.name}'",
-        capabilities,
+    measure_channels = _merged_measure_channels(sequence.defaults, step)
+    measure_channels, resolved_measure_specs, outputs_from_specs = _validate_measure_specs(
+        measure_specs=_merge_measure_specs(sequence.defaults, step),
+        measure_channels=measure_channels,
+        source_mode=source_mode,
+        step=step,
+        defaults=sequence.defaults,
+        capabilities=capabilities,
     )
     settle_s = _validate_non_negative(
         step.settle_s if step.settle_s is not None else sequence.defaults.settle_s,
@@ -216,22 +313,31 @@ def resolve_step(
             f"Step '{step.name}' defines both reciprocity_partner and reciprocal_step_of with different values"
         )
     try:
-        outputs, output_warnings = normalize_output_mapping(step.outputs or {}, excitation_mode=source_mode)
+        outputs_payload = dict(outputs_from_specs)
+        outputs_payload.update(step.outputs or {})
+        outputs, output_warnings = normalize_output_mapping(outputs_payload, excitation_mode=source_mode)
     except ValueError as exc:
         raise SequenceValidationError(str(exc)) from exc
     warnings.extend(output_warnings)
     resolved_frequency = step.frequency_hz if step.frequency_hz is not None else sequence.defaults.frequency_hz
-    resolved_harmonic = step.harmonic if step.harmonic is not None else sequence.defaults.harmonic
-    measure_mode = _validate_measure_mode(
-        step.measure_mode or sequence.defaults.measure_mode,
-        source_mode=source_mode,
-        harmonic=int(resolved_harmonic) if resolved_harmonic is not None else None,
-        context=f"Step '{step.name}' measure_mode",
+    legacy_harmonic = step.harmonic if step.harmonic is not None else sequence.defaults.harmonic
+    resolved_harmonic = next(
+        (
+            spec.harmonic
+            for spec in resolved_measure_specs.values()
+            if spec.harmonic is not None
+        ),
+        int(legacy_harmonic) if legacy_harmonic is not None else None,
     )
-    readout = _resolve_readout(step.readout or sequence.defaults.readout)
+    measure_mode = next(iter(resolved_measure_specs.values())).measure_mode
+    readout = next(iter(resolved_measure_specs.values())).readout
     reverse_policy = _resolve_reverse_policy(
         step.reverse_policy or sequence.defaults.reverse_policy,
         source_mode=source_mode,
+    )
+    matrix_policy = _resolve_matrix_policy(
+        step.matrix_policy or sequence.defaults.matrix_policy,
+        context=f"Step '{step.name}' matrix_policy",
     )
     source_value = _resolve_source_value(
         step,
@@ -239,9 +345,10 @@ def resolve_step(
         source_mode=source_mode,
         source_quantity=source_quantity,
     )
-    safety = validate_contact_map_state(contact_map, step.state)
-    if not safety.ok:
-        raise SequenceValidationError(f"Step '{step.name}' uses unsafe state '{step.state}': {safety.reason}")
+    if matrix_policy == "apply_state":
+        safety = validate_contact_map_state(contact_map, step.state)
+        if not safety.ok:
+            raise SequenceValidationError(f"Step '{step.name}' uses unsafe state '{step.state}': {safety.reason}")
     diagnostic_state = step.diagnostic_state
     if reverse_policy == "diagnostic_state":
         if not diagnostic_state:
@@ -290,9 +397,11 @@ def resolve_step(
             time_constant_s=step.time_constant_s if step.time_constant_s is not None else sequence.defaults.time_constant_s,
             nplc=step.nplc if step.nplc is not None else sequence.defaults.nplc,
             rolloff=step.rolloff if step.rolloff is not None else sequence.defaults.rolloff,
+            measure_specs=resolved_measure_specs,
             settle_s=settle_s,
             repeats=repeats,
             reverse_policy=reverse_policy,
+            matrix_policy=matrix_policy,
             diagnostic_state=diagnostic_state,
             lockin=bool(sequence.defaults.lockin) if sequence.defaults.lockin is not None else False,
             measure_kind=step.measure_kind,
@@ -302,7 +411,7 @@ def resolve_step(
             outputs=outputs,
             notes=step.notes or sequence.defaults.notes,
             metadata={**(sequence.defaults.metadata or {}), **(step.metadata or {})},
-            relay_channels=tuple(contact_map.get_state(step.state)["relay_channels"]),
+            relay_channels=tuple(contact_map.get_state(step.state).get("relay_channels", [])),
             warnings=tuple(warnings),
         )
     ac = validate_ac_excitation(
@@ -320,8 +429,6 @@ def resolve_step(
         raise SequenceValidationError(f"Step '{step.name}' cannot define current_a in ac mode")
     if resolved_frequency is None:
         raise SequenceValidationError(f"Step '{step.name}' must define frequency_hz in ac mode")
-    if resolved_harmonic is not None and int(resolved_harmonic) > 1 and measure_mode not in {"lockin", "auto"}:
-        raise SequenceValidationError(f"Step '{step.name}' harmonic > 1 requires lockin-compatible measure_mode")
     return ResolvedSequenceStep(
         index=index,
         enabled=True,
@@ -343,9 +450,11 @@ def resolve_step(
         time_constant_s=step.time_constant_s if step.time_constant_s is not None else sequence.defaults.time_constant_s,
         nplc=step.nplc if step.nplc is not None else sequence.defaults.nplc,
         rolloff=step.rolloff if step.rolloff is not None else sequence.defaults.rolloff,
+        measure_specs=resolved_measure_specs,
         settle_s=settle_s,
         repeats=repeats,
         reverse_policy=reverse_policy,
+        matrix_policy=matrix_policy,
         diagnostic_state=diagnostic_state,
         lockin=ac.lockin,
         measure_kind=step.measure_kind,
@@ -355,7 +464,7 @@ def resolve_step(
         outputs=outputs,
         notes=step.notes or sequence.defaults.notes,
         metadata={**(sequence.defaults.metadata or {}), **(step.metadata or {})},
-        relay_channels=tuple(contact_map.get_state(step.state)["relay_channels"]),
+        relay_channels=tuple(contact_map.get_state(step.state).get("relay_channels", [])),
         warnings=tuple(warnings),
     )
 
@@ -386,18 +495,28 @@ def validate_measurement_sequence(
             sequence.defaults.source_value,
             sequence.defaults.frequency_hz,
             sequence.defaults.harmonic,
+            sequence.defaults.measure_specs,
         )
     ):
-        validate_ac_excitation(
-            source=sequence.defaults.source_channel or sequence.defaults.source,
-            current_rms_a=sequence.defaults.current_rms_a or sequence.defaults.source_value,
-            frequency_hz=sequence.defaults.frequency_hz,
-            harmonic=sequence.defaults.harmonic,
-            settle_s=sequence.defaults.settle_s,
-            lockin=sequence.defaults.lockin,
-            expert_mode=sequence.expert_mode,
-            error_cls=SequenceValidationError,
+        default_harmonic = next(
+            (
+                spec.harmonic
+                for spec in (sequence.defaults.measure_specs or {}).values()
+                if spec.harmonic is not None
+            ),
+            sequence.defaults.harmonic,
         )
+        if default_harmonic is not None:
+            validate_ac_excitation(
+                source=sequence.defaults.source_channel or sequence.defaults.source,
+                current_rms_a=sequence.defaults.current_rms_a or sequence.defaults.source_value,
+                frequency_hz=sequence.defaults.frequency_hz,
+                harmonic=default_harmonic,
+                settle_s=sequence.defaults.settle_s,
+                lockin=sequence.defaults.lockin,
+                expert_mode=sequence.expert_mode,
+                error_cls=SequenceValidationError,
+            )
     resolved = [
         resolve_step(
             sequence=sequence,

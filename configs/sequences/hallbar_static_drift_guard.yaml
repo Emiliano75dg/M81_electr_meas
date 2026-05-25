@@ -1,0 +1,69 @@
+name: hallbar_static_drift_guard
+description: Static Hall-bar sequence with first-harmonic reference repeat for drift tracking
+contact_map: configs/contact_maps/hallbar_6contacts_static.yaml
+defaults:
+  source_mode: ac
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  current_rms_a: 1.0e-5
+  source_value: 1.0e-5
+  frequency_hz: 13.7
+  settle_s: 0.1
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: none
+  lockin: true
+steps:
+  - name: static_reference_start
+    state: static_ad_bc_ce
+    matrix_policy: none
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_bc_1w
+        transform: raw
+      M2:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_ce_1w
+        transform: raw
+    tags: [hallbar, static]
+  - name: static_second_harmonic
+    state: static_ad_bc_ce
+    matrix_policy: none
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_bc_1w_repeat
+        transform: raw
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: v_ce_2w
+        transform: raw
+    tags: [hallbar, static, second_harmonic]
+  - name: static_reference_end
+    state: static_ad_bc_ce
+    matrix_policy: none
+    repeat_of: static_reference_start
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_bc_1w_reference_end
+        transform: raw
+      M2:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_ce_1w_reference_end
+        transform: raw
+    tags: [hallbar, drift_guard, reference_repeat]

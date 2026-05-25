@@ -1,0 +1,69 @@
+name: vdp_full_dc
+description: Complete Van der Pauw DC sequence using source inversion on the same matrix state
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  source_mode: dc
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  measure_channel: M1
+  current_a: 1.0e-5
+  source_value: 1.0e-5
+  measure_mode: dc
+  readout: value
+  settle_s: 0.2
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: apply_state
+  lockin: false
+steps:
+  - name: ab_dc
+    state: I_AB_V_DC
+    outputs:
+      M1:
+        name: v_ab_dc_dc
+        transform: voltage_over_current
+    measure_kind: longitudinal
+    tags: [vdp, longitudinal]
+  - name: bc_ad
+    state: I_BC_V_AD
+    outputs:
+      M1:
+        name: v_bc_ad_dc
+        transform: voltage_over_current
+    measure_kind: anisotropy
+    tags: [vdp, anisotropy]
+  - name: dc_ab
+    state: I_DC_V_AB
+    reciprocal_step_of: ab_dc
+    outputs:
+      M1:
+        name: v_dc_ab_dc
+        transform: voltage_over_current
+    measure_kind: reciprocity
+    tags: [vdp, reciprocity]
+  - name: ad_bc
+    state: I_AD_V_BC
+    reciprocal_step_of: bc_ad
+    outputs:
+      M1:
+        name: v_ad_bc_dc
+        transform: voltage_over_current
+    measure_kind: anisotropy
+    tags: [vdp, anisotropy, reciprocity]
+  - name: ac_bd_hall_1
+    state: I_AC_V_BD
+    outputs:
+      M1:
+        name: v_ac_bd_dc
+        transform: voltage_over_current
+    measure_kind: hall_1
+    tags: [vdp, hall]
+  - name: bd_ac_hall_2
+    state: I_BD_V_AC
+    outputs:
+      M1:
+        name: v_bd_ac_dc
+        transform: voltage_over_current
+    measure_kind: hall_2
+    tags: [vdp, hall]

@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from ..exceptions import SequenceValidationError
-from .schema import MeasurementSequence, SequenceDefaults, SequenceStep
+from .schema import ChannelMeasureSpec, MeasurementSequence, SequenceDefaults, SequenceStep
 
 TOP_LEVEL_FIELDS = {"name", "description", "contact_map", "defaults", "steps", "expert_mode"}
 DEFAULT_FIELDS = {
@@ -28,9 +28,11 @@ DEFAULT_FIELDS = {
     "time_constant_s",
     "nplc",
     "rolloff",
+    "measure_specs",
     "settle_s",
     "repeats",
     "reverse_policy",
+    "matrix_policy",
     "notes",
     "lockin",
     "metadata",
@@ -61,10 +63,13 @@ STEP_FIELDS = {
     "time_constant_s",
     "nplc",
     "rolloff",
+    "measure_specs",
     "reverse_policy",
+    "matrix_policy",
     "diagnostic_state",
     "measure_kind",
     "tags",
+    "repeat_of",
     "reciprocity_partner",
     "reciprocal_step_of",
     "reciprocal_of",
@@ -110,6 +115,39 @@ def _as_optional_metadata(value: Any, context: str) -> dict[str, Any] | None:
     return dict(value)
 
 
+def _as_optional_measure_specs(value: Any, context: str) -> dict[str, ChannelMeasureSpec] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise SequenceValidationError(f"{context} must be a mapping keyed by measurement channel")
+    specs: dict[str, ChannelMeasureSpec] = {}
+    for channel, raw_spec in value.items():
+        if not isinstance(channel, str):
+            raise SequenceValidationError(f"{context} keys must be strings")
+        if not isinstance(raw_spec, dict):
+            raise SequenceValidationError(f"{context}.{channel} must be a mapping")
+        payload = dict(raw_spec)
+        specs[channel] = ChannelMeasureSpec(
+            measure_mode=str(payload.get("measure_mode", "auto")),
+            harmonic=payload.get("harmonic"),
+            readout=_normalize_readout_value(payload.get("readout", "value"), f"{context}.{channel}.readout"),
+            output=payload.get("output"),
+            transform=payload.get("transform"),
+            time_constant_s=payload.get("time_constant_s"),
+            rolloff=payload.get("rolloff"),
+            nplc=payload.get("nplc"),
+        )
+    return specs
+
+
+def _normalize_readout_value(value: Any, context: str) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return ",".join(value)
+    raise SequenceValidationError(f"{context} must be a string or list of strings")
+
+
 def _load_defaults(data: Any) -> SequenceDefaults:
     payload = _require_mapping(data, "defaults")
     _reject_unknown_fields(payload, DEFAULT_FIELDS, "defaults")
@@ -128,13 +166,15 @@ def _load_defaults(data: Any) -> SequenceDefaults:
         frequency_hz=payload.get("frequency_hz"),
         harmonic=payload.get("harmonic"),
         measure_mode=payload.get("measure_mode"),
-        readout=payload.get("readout"),
+        readout=_normalize_readout_value(payload.get("readout"), "defaults.readout") if payload.get("readout") is not None else None,
         time_constant_s=payload.get("time_constant_s"),
         nplc=payload.get("nplc"),
         rolloff=payload.get("rolloff"),
+        measure_specs=_as_optional_measure_specs(payload.get("measure_specs"), "defaults.measure_specs"),
         settle_s=float(payload.get("settle_s", 0.0)),
         repeats=int(payload.get("repeats", 1)),
         reverse_policy=str(payload.get("reverse_policy", "none")),
+        matrix_policy=str(payload.get("matrix_policy", "apply_state")),
         notes=payload.get("notes"),
         lockin=payload.get("lockin"),
         metadata=_as_optional_metadata(payload.get("metadata"), "defaults.metadata"),
@@ -168,14 +208,17 @@ def _load_step(index: int, data: Any) -> SequenceStep:
         settle_s=payload.get("settle_s"),
         repeats=payload.get("repeats"),
         measure_mode=payload.get("measure_mode"),
-        readout=payload.get("readout"),
+        readout=_normalize_readout_value(payload.get("readout"), f"steps[{index}].readout") if payload.get("readout") is not None else None,
         time_constant_s=payload.get("time_constant_s"),
         nplc=payload.get("nplc"),
         rolloff=payload.get("rolloff"),
+        measure_specs=_as_optional_measure_specs(payload.get("measure_specs"), f"steps[{index}].measure_specs"),
         reverse_policy=payload.get("reverse_policy"),
+        matrix_policy=payload.get("matrix_policy"),
         diagnostic_state=payload.get("diagnostic_state"),
         measure_kind=payload.get("measure_kind"),
         tags=_as_optional_str_list(payload.get("tags"), f"steps[{index}].tags"),
+        repeat_of=payload.get("repeat_of"),
         reciprocity_partner=payload.get("reciprocity_partner"),
         reciprocal_step_of=payload.get("reciprocal_step_of"),
         reciprocal_of=payload.get("reciprocal_of"),
@@ -246,10 +289,28 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
         "readout": sequence.defaults.readout,
         "time_constant_s": sequence.defaults.time_constant_s,
         "nplc": sequence.defaults.nplc,
-        "rolloff": sequence.defaults.rolloff,
-        "notes": sequence.defaults.notes,
-        "lockin": sequence.defaults.lockin,
-        "metadata": sequence.defaults.metadata,
+            "rolloff": sequence.defaults.rolloff,
+            "measure_specs": (
+                {
+                    channel: {
+                        "measure_mode": spec.measure_mode,
+                        "harmonic": spec.harmonic,
+                        "readout": spec.readout,
+                        "output": spec.output,
+                        "transform": spec.transform,
+                        "time_constant_s": spec.time_constant_s,
+                        "rolloff": spec.rolloff,
+                        "nplc": spec.nplc,
+                    }
+                    for channel, spec in sequence.defaults.measure_specs.items()
+                }
+                if sequence.defaults.measure_specs is not None
+                else None
+            ),
+            "matrix_policy": sequence.defaults.matrix_policy,
+            "notes": sequence.defaults.notes,
+            "lockin": sequence.defaults.lockin,
+            "metadata": sequence.defaults.metadata,
     }
     for key, value in optional_defaults.items():
         if value is not None:
@@ -283,10 +344,29 @@ def measurement_sequence_to_dict(sequence: MeasurementSequence) -> dict[str, Any
             "time_constant_s": step.time_constant_s,
             "nplc": step.nplc,
             "rolloff": step.rolloff,
+            "measure_specs": (
+                {
+                    channel: {
+                        "measure_mode": spec.measure_mode,
+                        "harmonic": spec.harmonic,
+                        "readout": spec.readout,
+                        "output": spec.output,
+                        "transform": spec.transform,
+                        "time_constant_s": spec.time_constant_s,
+                        "rolloff": spec.rolloff,
+                        "nplc": spec.nplc,
+                    }
+                    for channel, spec in step.measure_specs.items()
+                }
+                if step.measure_specs is not None
+                else None
+            ),
             "reverse_policy": step.reverse_policy,
+            "matrix_policy": step.matrix_policy,
             "diagnostic_state": step.diagnostic_state,
             "measure_kind": step.measure_kind,
             "tags": step.tags,
+            "repeat_of": step.repeat_of,
             "reciprocity_partner": step.reciprocity_partner,
             "reciprocal_step_of": step.reciprocal_step_of,
             "reciprocal_of": step.reciprocal_of,

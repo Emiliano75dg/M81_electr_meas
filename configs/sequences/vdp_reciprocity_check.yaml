@@ -1,0 +1,35 @@
+name: vdp_reciprocity_check
+description: Diagnostic Van der Pauw reciprocity-only check
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  source_mode: ac
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  measure_channel: M1
+  current_rms_a: 1.0e-5
+  source_value: 1.0e-5
+  frequency_hz: 13.7
+  harmonic: 1
+  measure_mode: lockin
+  readout: x
+  settle_s: 0.1
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: apply_state
+  lockin: true
+steps:
+  - name: ab_dc
+    state: I_AB_V_DC
+    tags: [vdp, diagnostic, reciprocity_check]
+  - name: dc_ab
+    state: I_DC_V_AB
+    reciprocal_step_of: ab_dc
+    tags: [vdp, diagnostic, reciprocity_check]
+  - name: bc_ad
+    state: I_BC_V_AD
+    tags: [vdp, diagnostic, reciprocity_check]
+  - name: ad_bc
+    state: I_AD_V_BC
+    reciprocal_step_of: bc_ad
+    tags: [vdp, diagnostic, reciprocity_check]

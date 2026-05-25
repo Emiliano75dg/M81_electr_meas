@@ -44,7 +44,7 @@ class ContactMap:
 
     def get_state(self, state_name: str) -> dict[str, Any]:
         state = dict(self.states[state_name])
-        if not state.get("relay_channels"):
+        if "relay_channels" not in state:
             state["relay_channels"] = self.generate_relay_channels(state)
         return state
 
@@ -155,6 +155,14 @@ class ContactMap:
                 for contact in state.get(key, []):
                     if contact not in self.contacts:
                         raise ContactMapError(f"State {state_name} references unknown contact {contact}")
+            for source_contacts in state.get("source", {}).values():
+                for contact in source_contacts:
+                    if contact not in self.contacts:
+                        raise ContactMapError(f"State {state_name} source references unknown contact {contact}")
+            for measure_contacts in state.get("measures", {}).values():
+                for contact in measure_contacts:
+                    if contact not in self.contacts:
+                        raise ContactMapError(f"State {state_name} measures references unknown contact {contact}")
             relay_channels = state.get("relay_channels")
             if relay_channels:
                 if len(relay_channels) != len(set(relay_channels)):

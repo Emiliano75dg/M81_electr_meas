@@ -10,7 +10,12 @@ from .base import MeasurementPoint, MeasurementProtocol
 def default_vdp_hall_states(contact_map: Any) -> list[str]:
     preferred: list[str] = []
     seen_pairs: set[frozenset[str]] = set()
-    for state_name in contact_map.get_states_for_group("vdp"):
+    state_names = [
+        state_name
+        for state_name, state in contact_map.states.items()
+        if str(state.get("group", "")).startswith("vdp")
+    ]
+    for state_name in state_names:
         reciprocal_name = contact_map.get_state_name(state_name, "reciprocal")
         pair_key = frozenset(name for name in [state_name, reciprocal_name] if name)
         if pair_key and pair_key in seen_pairs:

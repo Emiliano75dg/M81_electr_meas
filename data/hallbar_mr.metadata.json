@@ -1,8 +1,8 @@
 {
   "driver_versions": {
-    "git_commit": null
+    "git_commit": "79cf6838ab57e15719b80ba5f2a27a5d7a681358"
   },
-  "finished_at": "2026-05-20T12:47:10.607940+00:00",
+  "finished_at": "2026-05-24T10:35:09.224162+00:00",
   "geometry": "hallbar_6contacts_7709",
   "instruments": {
     "daq6510": {
@@ -13,13 +13,38 @@
     "environment": {
       "endpoint": "http://localhost:8000",
       "kind": "mock",
-      "mode": "integrated"
+      "mode": "standalone"
     },
     "m81": {
       "connection": {
         "kind": "mock"
       },
-      "enabled": true
+      "enabled": true,
+      "measure_harmonics": {
+        "M1": 1,
+        "M2": 2,
+        "M3": 3
+      },
+      "measure_modes": {
+        "M1": "lockin",
+        "M2": "dc",
+        "M3": "auto"
+      },
+      "measure_nplc": {
+        "M1": 1.0,
+        "M2": 2.0,
+        "M3": 1.0
+      },
+      "measure_rolloffs": {
+        "M1": "R24",
+        "M2": "R12",
+        "M3": "R24"
+      },
+      "measure_time_constants_s": {
+        "M1": 0.3,
+        "M2": 1.0,
+        "M3": 0.3
+      }
     }
   },
   "mapping_contacts": {
@@ -68,7 +93,7 @@
   },
   "notes": null,
   "sample_id": "demo-sample",
-  "started_at": "2026-05-20T12:47:10.607929+00:00",
+  "started_at": "2026-05-24T10:35:09.224151+00:00",
   "user": null,
   "yaml_file": "configs/contact_maps/hallbar_6contacts_7709.yaml"
 }

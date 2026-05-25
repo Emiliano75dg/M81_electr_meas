@@ -1,0 +1,2 @@
+[console_scripts]
+electrical-measure = electrical_measurements.runners.run_measurement:main

@@ -1,0 +1,34 @@
+name: hallbar_static_fast
+description: Single-step static Hall-bar sequence for long sweeps
+contact_map: configs/contact_maps/hallbar_6contacts_static.yaml
+defaults:
+  source_mode: ac
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  current_rms_a: 1.0e-5
+  source_value: 1.0e-5
+  frequency_hz: 13.7
+  settle_s: 0.1
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: none
+  lockin: true
+steps:
+  - name: static_fast
+    state: static_ad_bc_ce
+    matrix_policy: none
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_bc_1w
+        transform: raw
+      M2:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_ce_1w
+        transform: raw
+    tags: [hallbar, static, fast]

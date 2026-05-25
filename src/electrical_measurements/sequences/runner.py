@@ -35,6 +35,12 @@ class SequenceRunner:
         rows: list[dict[str, Any]] = []
         for step in self.resolved_steps:
             bias_points = resolve_bias_points(step)
+            measure_specs_summary = "; ".join(
+                f"{channel}:{spec.measure_mode}/{spec.readout}"
+                + (f"/{spec.harmonic}f" if spec.harmonic is not None else "")
+                + (f"/{spec.transform}" if spec.transform else "")
+                for channel, spec in step.measure_specs.items()
+            )
             rows.append(
                 {
                     "idx": step.index + 1,
@@ -60,10 +66,12 @@ class SequenceRunner:
                     "measure_mode": step.measure_mode,
                     "readout": step.readout,
                     "measure_channels": ",".join(step.measure_channels),
+                    "measure_specs": measure_specs_summary,
                     "outputs": ",".join(f"{channel}:{spec.name}/{spec.transform}" for channel, spec in step.outputs.items()),
                     "settle_s": f"{step.settle_s:.6g}",
                     "repeats": step.repeats,
                     "reverse_policy": step.reverse_policy,
+                    "matrix_policy": step.matrix_policy,
                     "tags": ",".join(step.tags),
                     "reciprocal_step_of": step.reciprocal_step_of or "",
                     "warnings": " | ".join(step.warnings),
@@ -90,10 +98,12 @@ class SequenceRunner:
             "measure_mode",
             "readout",
             "measure_channels",
+            "measure_specs",
             "outputs",
             "settle_s",
             "repeats",
             "reverse_policy",
+            "matrix_policy",
             "tags",
             "reciprocal_step_of",
             "warnings",
@@ -104,7 +114,7 @@ class SequenceRunner:
             for header in headers
         }
         lines = [
-            "Dry-run only. Actual relay switching still uses Matrix7709.apply_state().",
+            "Dry-run only. Steps with matrix_policy=none perform no matrix switching; apply_state means Matrix7709.apply_state() is used.",
             "",
             " ".join(header.ljust(widths[header]) for header in headers),
             " ".join("-" * widths[header] for header in headers),
@@ -143,15 +153,35 @@ class SequenceRunner:
             configure_m81_source_for_dc(self.m81, excitation, list(step.measure_channels))
             return excitation
         excitation = self._resolve_ac_excitation(step)
+        if step.measure_specs:
+            configure_m81_source_for_ac(self.m81, excitation, [])
+            for channel, spec in step.measure_specs.items():
+                if spec.measure_mode == "dc":
+                    self.m81.configure_dc_measure(channel, nplc=spec.nplc or step.nplc or 1.0)
+                    continue
+                self.m81.configure_lockin_measure(
+                    channel,
+                    harmonic=spec.harmonic or 1,
+                    time_constant_s=spec.time_constant_s or step.time_constant_s or 0.3,
+                    reference_source=step.source_channel,
+                    rolloff=spec.rolloff or step.rolloff or "R24",
+                )
+            return excitation
         configure_m81_source_for_ac(self.m81, excitation, list(step.measure_channels))
         return excitation
 
     def _read_channels_for(self, step: ResolvedSequenceStep, channels: tuple[str, ...] | list[str]) -> dict[str, dict[str, Any]]:
         if self.m81 is None:
             return {}
-        if step.measure_mode == "dc" or (step.source_mode == "dc" and step.measure_mode != "lockin"):
-            return {channel: self.m81.read_dc(channel) for channel in channels}
-        return {channel: self.m81.read_lockin(channel) for channel in channels}
+        readings: dict[str, dict[str, Any]] = {}
+        for channel in channels:
+            spec = step.measure_specs.get(channel)
+            resolved_mode = spec.measure_mode if spec is not None else step.measure_mode
+            if resolved_mode == "dc" or (step.source_mode == "dc" and resolved_mode != "lockin"):
+                readings[channel] = self.m81.read_dc(channel)
+            else:
+                readings[channel] = self.m81.read_lockin(channel)
+        return readings
 
     def _read_channels(self, step: ResolvedSequenceStep) -> dict[str, dict[str, Any]]:
         return self._read_channels_for(step, step.measure_channels)
@@ -233,6 +263,20 @@ class SequenceRunner:
                 "source_polarity": bias_polarity,
                 "measure_mode": step.measure_mode,
                 "readout": step.readout,
+                "measure_specs": {
+                    channel: {
+                        "measure_mode": spec.measure_mode,
+                        "harmonic": spec.harmonic,
+                        "readout": spec.readout,
+                        "output": spec.output,
+                        "transform": spec.transform,
+                        "time_constant_s": spec.time_constant_s,
+                        "rolloff": spec.rolloff,
+                        "nplc": spec.nplc,
+                    }
+                    for channel, spec in step.measure_specs.items()
+                },
+                "matrix_policy": step.matrix_policy,
                 "timestamp_matrix_applied": timestamps["matrix_applied"],
                 "timestamp_measure_start": timestamps["measure_start"],
                 "timestamp_measure_end": timestamps["measure_end"],
@@ -250,14 +294,20 @@ class SequenceRunner:
     def run(self, *, temperature_k: float | None = None, field_t: float | None = None) -> pd.DataFrame:
         if self.dry_run:
             return pd.DataFrame(self.build_preview_rows())
-        if self.m81 is None or self.matrix is None:
-            raise RuntimeError("SequenceRunner requires m81 and matrix in non-dry-run mode")
+        requires_matrix = any(step.matrix_policy == "apply_state" for step in self.resolved_steps)
+        if self.m81 is None or (requires_matrix and self.matrix is None):
+            raise RuntimeError("SequenceRunner requires m81 and matrix in non-dry-run mode when switching is enabled")
         rows: list[dict[str, Any]] = []
         for step in self.resolved_steps:
             self.m81.disable_all_sources()
             for bias_point in resolve_bias_points(step):
-                relay_channels = self.matrix.apply_state(bias_point.state)
-                timestamps = {"matrix_applied": _utcnow()}
+                relay_channels: list[int] | tuple[int, ...]
+                if step.matrix_policy == "none":
+                    relay_channels = []
+                    timestamps = {"matrix_applied": "no matrix switching"}
+                else:
+                    relay_channels = self.matrix.apply_state(bias_point.state)
+                    timestamps = {"matrix_applied": _utcnow()}
                 if step.settle_s > 0:
                     time.sleep(step.settle_s)
                 self._configure_excitation(step, source_value=bias_point.source_value)
@@ -296,8 +346,9 @@ class SequenceRunner:
     ) -> pd.DataFrame:
         if self.dry_run:
             return pd.DataFrame(self.build_preview_rows())
-        if self.m81 is None or self.matrix is None:
-            raise RuntimeError("SequenceRunner requires m81 and matrix in non-dry-run mode")
+        requires_matrix = any(step.matrix_policy == "apply_state" for step in self.resolved_steps)
+        if self.m81 is None or (requires_matrix and self.matrix is None):
+            raise RuntimeError("SequenceRunner requires m81 and matrix in non-dry-run mode when switching is enabled")
         rows: list[dict[str, Any]] = []
         for step in self.resolved_steps:
             if step.source_mode != "ac":
@@ -309,8 +360,12 @@ class SequenceRunner:
                     f"Streaming sequence currently supports a single primary measurement channel; step '{step.name}' configured {len(step.measure_channels)} channels"
                 )
             self.m81.disable_all_sources()
-            relay_channels = self.matrix.apply_state(step.state)
-            timestamp_matrix_applied = _utcnow()
+            if step.matrix_policy == "none":
+                relay_channels = []
+                timestamp_matrix_applied = "no matrix switching"
+            else:
+                relay_channels = self.matrix.apply_state(step.state)
+                timestamp_matrix_applied = _utcnow()
             if step.settle_s > 0:
                 time.sleep(step.settle_s)
             self._configure_excitation(step)

@@ -7,8 +7,10 @@ from electrical_measurements.gui.app import (
     backend_measure_mode_to_ui,
     build_live_record,
     compute_plot_points,
+    describe_sequence_preset,
     empty_sequence_data,
     environment_mode_supports_control,
+    format_sequence_preset_summary,
     format_measure_summary,
     hallbar_live_channels,
     latest_csv_files,
@@ -22,6 +24,7 @@ from electrical_measurements.gui.app import (
     protocol_is_multi_state,
     recommended_states_for_protocol,
     relay_channels_for_state,
+    sequence_preset_names_for_category,
     sequence_step_table_row,
     ui_measure_mode_to_backend,
 )
@@ -155,6 +158,50 @@ def test_sequence_step_table_row_formats_dc_current_and_relays():
     assert row["current"] == "-1e-05"
     assert row["relay_channels"] == "17,26,35,44"
     assert row["outputs"] == "M1:rxx"
+
+
+def test_sequence_step_table_row_shows_per_channel_measure_specs():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    defaults = {"excitation_mode": "ac", "source": "S1", "frequency_hz": 13.7, "harmonic": 1}
+    step = {
+        "name": "dual",
+        "state": "I_AB_V_DC",
+        "measure_specs": {
+            "M1": {"measure_mode": "lockin", "harmonic": 1, "readout": "x", "transform": "lockin_x_over_current", "output": "r1"},
+            "M2": {"measure_mode": "lockin", "harmonic": 2, "readout": "x", "transform": "lockin_x_over_current", "output": "r2"},
+        },
+    }
+    row = sequence_step_table_row(step, defaults, contact_map, 0)
+    assert row["m1_spec"] == "1/x/lockin_x_over_current/r1"
+    assert row["m2_spec"] == "2/x/lockin_x_over_current/r2"
+
+
+def test_sequence_presets_are_grouped_in_expected_categories():
+    assert sequence_preset_names_for_category("Van der Pauw") == [
+        "vdp_full_ac",
+        "vdp_full_dc",
+        "vdp_fast_hall_ac",
+        "vdp_hall_second_harmonic_ac",
+        "vdp_reciprocity_check",
+        "vdp_hall_with_drift_guard",
+        "vdp_lockin_phase_diagnostic",
+    ]
+    assert sequence_preset_names_for_category("Hall bar") == [
+        "hallbar_static_1w_2w",
+        "hallbar_static_fast",
+        "hallbar_static_drift_guard",
+    ]
+    assert sequence_preset_names_for_category("Diagnostics") == ["second_harmonic_frequency_check"]
+
+
+def test_sequence_preset_summary_reports_key_metadata():
+    summary = describe_sequence_preset("hallbar_static_1w_2w")
+    assert summary["steps"] == 2
+    assert summary["switching"] == "static wiring"
+    assert summary["channels"] == ["M1", "M2"]
+    assert summary["harmonics"] == [1, 2]
+    assert "second_harmonic" in summary["features"]
+    assert "hallbar_static_1w_2w" in format_sequence_preset_summary("hallbar_static_1w_2w")
 
 
 def test_relay_channels_for_state_returns_empty_when_missing():

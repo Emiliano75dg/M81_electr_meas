@@ -158,6 +158,56 @@ def test_dry_run_preview_includes_relay_channels():
     assert "current_rms_a" in preview
 
 
+def test_dry_run_vdp_ac_has_no_current_inversion():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    sequence = load_measurement_sequence("configs/sequences/vdp_full_ac.yaml")
+    resolved = validate_measurement_sequence(sequence, contact_map)
+    runner = SequenceRunner(sequence=sequence, contact_map=contact_map, resolved_steps=resolved, dry_run=True)
+    dataframe = runner.run()
+    assert len(dataframe) == 6
+    assert dataframe["resolved_bias"].str.startswith("-").sum() == 0
+
+
+def test_dry_run_vdp_dc_generates_two_bias_points_per_step():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    sequence = load_measurement_sequence("configs/sequences/vdp_full_dc.yaml")
+    resolved = validate_measurement_sequence(sequence, contact_map)
+    runner = SequenceRunner(sequence=sequence, contact_map=contact_map, resolved_steps=resolved, dry_run=True)
+    dataframe = runner.run()
+    assert len(dataframe) == 6
+    assert dataframe["resolved_bias"].str.contains("-").all()
+
+
+def test_runner_supports_mixed_first_and_second_harmonic_in_same_step():
+    runner, m81, _matrix, _resolved = _runner(
+        "configs/sequences/vdp_hall_second_harmonic_ac.yaml",
+        "configs/contact_maps/vdp_4contacts_7709.yaml",
+    )
+    runner.run(temperature_k=300.0, field_t=0.0)
+    assert m81.get_measure_settings("M1")["harmonic"] == 1
+    assert m81.get_measure_settings("M2")["harmonic"] == 2
+
+
+def test_static_hallbar_sequence_skips_apply_state():
+    runner, _m81, matrix, _resolved = _runner(
+        "configs/sequences/hallbar_static_1w_2w.yaml",
+        "configs/contact_maps/hallbar_6contacts_static.yaml",
+    )
+    dataframe = runner.run(temperature_k=300.0, field_t=0.0)
+    assert matrix.apply_state_calls == []
+    assert not dataframe.empty
+    assert set(dataframe["matrix_relay_channels"].apply(tuple)) == {()}
+
+
+def test_static_hallbar_dry_run_mentions_no_matrix_switching():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/hallbar_6contacts_static.yaml")
+    sequence = load_measurement_sequence("configs/sequences/hallbar_static_1w_2w.yaml")
+    resolved = validate_measurement_sequence(sequence, contact_map)
+    runner = SequenceRunner(sequence=sequence, contact_map=contact_map, resolved_steps=resolved, dry_run=True)
+    preview = runner.format_preview()
+    assert "no matrix switching" in preview
+
+
 def test_sequence_stream_records_initial_and_final_environment_values():
     runner, _m81, _matrix, _resolved = _runner("configs/sequences/vdp_ac_reciprocity.yaml", "configs/contact_maps/vdp_4contacts_7709.yaml")
     environment = MockEnvironmentController(field_t=0.0, temperature_k=300.0)

@@ -1,0 +1,67 @@
+name: second_harmonic_frequency_check
+description: Frequency scan diagnostic for simultaneous first- and second-harmonic readout
+contact_map: configs/contact_maps/vdp_4contacts_7709.yaml
+defaults:
+  source_mode: ac
+  source_quantity: current
+  source_channel: S1
+  source: S1
+  current_rms_a: 1.0e-5
+  source_value: 1.0e-5
+  settle_s: 0.1
+  repeats: 1
+  reverse_policy: auto
+  matrix_policy: apply_state
+  lockin: true
+steps:
+  - name: freq_13_7
+    state: I_AB_V_DC
+    frequency_hz: 13.7
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_1w_13_7
+        transform: lockin_x_over_current
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: v_2w_13_7
+        transform: raw
+    tags: [diagnostic, second_harmonic, frequency_check]
+  - name: freq_17_3
+    state: I_AB_V_DC
+    frequency_hz: 17.3
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_1w_17_3
+        transform: lockin_x_over_current
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: v_2w_17_3
+        transform: raw
+    tags: [diagnostic, second_harmonic, frequency_check]
+  - name: freq_23_1
+    state: I_AB_V_DC
+    frequency_hz: 23.1
+    measure_specs:
+      M1:
+        measure_mode: lockin
+        harmonic: 1
+        readout: x
+        output: v_1w_23_1
+        transform: lockin_x_over_current
+      M2:
+        measure_mode: lockin
+        harmonic: 2
+        readout: x
+        output: v_2w_23_1
+        transform: raw
+    tags: [diagnostic, second_harmonic, frequency_check]

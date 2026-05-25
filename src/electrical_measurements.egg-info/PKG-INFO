@@ -1,3 +1,20 @@
+Metadata-Version: 2.4
+Name: electrical_measurements
+Version: 0.1.0
+Summary: Framework for electrical measurements versus temperature and magnetic field.
+Author: OpenAI Codex
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.26
+Requires-Dist: pandas>=2.2
+Requires-Dist: scipy>=1.13
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: pyvisa>=1.14
+Provides-Extra: hardware
+Requires-Dist: lakeshore>=1.9; extra == "hardware"
+Provides-Extra: test
+Requires-Dist: pytest>=8.0; extra == "test"
+
 # electrical_measurements
 
 A Python framework for automating complex electrical measurements on semiconductor samples. It manages temperature and magnetic field control, contact switching via relay matrices (e.g., Keithley/Tektronix DAQ6510 + 7709), and data acquisition from instruments like the Lake Shore M81-SSM.
@@ -163,25 +180,12 @@ Van der Pauw example: [configs/contact_maps/vdp_4contacts_7709.yaml](/home/emili
 
 Hall bar example: [configs/contact_maps/hallbar_6contacts_7709.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_7709.yaml)
 
-Static Hall bar example: [configs/contact_maps/hallbar_6contacts_static.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/contact_maps/hallbar_6contacts_static.yaml)
-
 Sequence examples:
 
 - [configs/sequences/vdp_ac_reciprocity.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_ac_reciprocity.yaml)
 - [configs/sequences/vdp_dc_reverse_bias.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_dc_reverse_bias.yaml)
-- [configs/sequences/vdp_full_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_full_ac.yaml)
-- [configs/sequences/vdp_full_dc.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_full_dc.yaml)
-- [configs/sequences/vdp_fast_hall_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_fast_hall_ac.yaml)
-- [configs/sequences/vdp_hall_second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_hall_second_harmonic_ac.yaml)
-- [configs/sequences/vdp_reciprocity_check.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_reciprocity_check.yaml)
-- [configs/sequences/vdp_hall_with_drift_guard.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_hall_with_drift_guard.yaml)
-- [configs/sequences/vdp_lockin_phase_diagnostic.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/vdp_lockin_phase_diagnostic.yaml)
 - [configs/sequences/hallbar_ac_rxx_rxy.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_ac_rxx_rxy.yaml)
-- [configs/sequences/hallbar_static_1w_2w.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_static_1w_2w.yaml)
-- [configs/sequences/hallbar_static_fast.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_static_fast.yaml)
-- [configs/sequences/hallbar_static_drift_guard.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/hallbar_static_drift_guard.yaml)
 - [configs/sequences/second_harmonic_ac.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_ac.yaml)
-- [configs/sequences/second_harmonic_frequency_check.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/second_harmonic_frequency_check.yaml)
 - [configs/sequences/example_hallbar_dc_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_hallbar_dc_sequence.yaml)
 - [configs/sequences/example_second_harmonic_ac_sequence.yaml](/home/emiliano/Documents/Automazione/M81_electr_meas/configs/sequences/example_second_harmonic_ac_sequence.yaml)
 
@@ -229,72 +233,16 @@ electrical-measure run \
 
 Sequence concepts:
 
-- Sequence files now use an explicit `MeasurementSequence` model with `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, `reverse_policy`, optional per-channel `measure_specs`, and `matrix_policy`
+- Sequence files now use an explicit `MeasurementSequence` model with `source_mode`, `source_quantity`, `source_value`, `measure_mode`, `readout`, `harmonic`, `frequency_hz`, and `reverse_policy`
 - `source_quantity: current` is currently the only hardware-supported sourcing mode
-- Van der Pauw states assume contacts `A/B/C/D` ordered clockwise; the complete family separates anisotropy (`AB-DC`, `BC-AD`), reciprocity (`DC-AB`, `AD-BC`), and Hall (`AC-BD`, `BD-AC`)
-- Static Hall-bar presets assume contacts `A/B/C/D/E/F` ordered clockwise, with `A-D` as current, `B-C` as the main longitudinal pair, and `C-E` as the main Hall pair
-- DC reverse bias is DC-only and is resolved by reversing current polarity on the same matrix state with `reverse_policy: auto`, which resolves to `dc_source_inversion`
-- AC lock-in sequences use `source_mode: ac`, `frequency_hz`, and `harmonic`; `reverse_policy: auto` intentionally resolves to `none`, so no automatic reverse-current step is added
+- DC reverse bias is DC-only and is resolved by reversing current polarity on the same matrix state with `reverse_policy: auto` or `reverse_policy: dc_source_inversion`
+- AC lock-in sequences use `source_mode: ac`, `frequency_hz`, and `harmonic`; `reverse_policy: auto` intentionally resolves to a single measurement
 - ordinary AC Van der Pauw, Hall, magnetoresistance, and second-harmonic sequences normally do not need reverse-bias steps
 - `reverse_current` contact-map relations are no longer used as automatic reverse bias; keep them only for explicit diagnostic states
-- reciprocity is a different matrix state with exchanged current and voltage contacts, while anisotropy compares the two orthogonal longitudinal families and Hall uses the diagonal current/voltage pairings
-- `measure_specs` lets one step configure `M1/M2/M3` independently, for example `M1` at `1w` and `M2` at `2w`
-- `matrix_policy: none` supports static wiring such as a permanently cabled Hall bar; dry-run previews mark these steps as `no matrix switching`
-- complete sequences are the reference path, fast sequences are intended for long sweeps, and diagnostic sequences isolate reciprocity, phase, drift, or frequency dependence
+- reciprocity is a different matrix state with exchanged current and voltage contacts
 - magnetic-field reversal belongs to the outer field loop, not the matrix sequence
 - temperature ramps belong to the outer environment loop, not the matrix sequence
 - for Teslatron or LabVIEW driven ramps, prefer `stream-observe`; the environment stays read-only unless `allow_control: true` and `mode: integrated` are both enabled
-
-Per-channel `measure_specs` example:
-
-```yaml
-measure_specs:
-  M1:
-    measure_mode: lockin
-    harmonic: 1
-    readout: x
-    output: rxx_1w_ohm
-    transform: lockin_x_over_current
-  M2:
-    measure_mode: lockin
-    harmonic: 2
-    readout: x
-    output: rxy_2w_ohm
-    transform: lockin_x_over_current
-```
-
-Static Hall-bar example without active matrix switching:
-
-```yaml
-defaults:
-  source_mode: ac
-  source: S1
-  current_rms_a: 1.0e-5
-  frequency_hz: 13.7
-  matrix_policy: none
-steps:
-  - name: ad_bc_ce_second_harmonic
-    state: static_ad_bc_ce
-    measure_specs:
-      M1:
-        measure_mode: lockin
-        harmonic: 1
-        readout: x
-        output: rxx_1w_ohm
-        transform: lockin_x_over_current
-      M2:
-        measure_mode: lockin
-        harmonic: 2
-        readout: x
-        output: rxy_2w_ohm
-        transform: lockin_x_over_current
-```
-
-Suggested usage during long sweeps:
-
-- use `vdp_fast_hall_ac` or `hallbar_static_fast` for the main sweep path
-- use `vdp_hall_with_drift_guard` or `hallbar_static_drift_guard` when you need periodic reference repeats
-- keep `vdp_full_ac`, `vdp_full_dc`, `vdp_reciprocity_check`, `vdp_lockin_phase_diagnostic`, and `second_harmonic_frequency_check` for setup and diagnostics
 
 Other useful subcommands:
 
@@ -327,7 +275,6 @@ From the GUI you can:
 - configure `S1`/`S2`/`S3` manually in current or voltage mode, in DC or AC lock-in, with setpoint, frequency, and harmonic
 - use guided mini-sequences such as `Safe Switch Then Enable`, `Safe Switch Then Read`, and `Disable + Open All`
 - apply a matrix state manually, open all relays, and quickly read `M1` or `M2`
-- use the `Sequence` tab preset categories `Van der Pauw`, `Hall bar`, and `Diagnostics` to inspect and load the standard YAML presets
 - start continuous live acquisition with a circular buffer and a real-time plot directly from the `Live` tab
 - with a Hall bar equipped with `vxx_meter` and `vxy_meter`, acquire both live channels and overlay them in the plot with `x_dual` or `r_dual`
 - draw quick plots directly in the GUI by choosing `X/Y` columns from a CSV

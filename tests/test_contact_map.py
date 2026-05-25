@@ -27,6 +27,21 @@ def test_contact_map_extracts_instrument_channels():
     assert contact_map.instrument_channel("vxy_meter") == "M2"
 
 
+def test_vdp_contact_map_exposes_new_clockwise_states():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/vdp_4contacts_7709.yaml")
+    assert contact_map.get_state("I_AB_V_DC")["voltage"] == ["D", "C"]
+    assert contact_map.get_state("I_BC_V_AD")["voltage"] == ["A", "D"]
+    assert contact_map.get_reciprocal_state("I_AB_V_DC") == contact_map.get_state("I_DC_V_AB")
+
+
+def test_static_hallbar_contact_map_keeps_empty_relays():
+    contact_map = ContactMap.from_yaml("configs/contact_maps/hallbar_6contacts_static.yaml")
+    state = contact_map.get_state("static_ad_bc_ce")
+    assert state["relay_channels"] == []
+    assert state["source"]["S1"] == ["A", "D"]
+    assert state["measures"]["M2"] == ["C", "E"]
+
+
 def test_contact_map_validate_raises_domain_exception_for_missing_name(tmp_path):
     path = tmp_path / "invalid_contact_map.yaml"
     path.write_text(
