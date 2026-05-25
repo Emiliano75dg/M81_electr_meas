@@ -255,11 +255,18 @@ def _validate_measure_specs(
             rolloff=raw_spec.rolloff,
             nplc=raw_spec.nplc,
         )
-        if raw_spec.output:
-            output_spec = {"name": str(raw_spec.output)}
-            if raw_spec.transform:
-                output_spec["transform"] = str(raw_spec.transform)
-            outputs_from_specs[channel] = output_spec
+        output_name = str(raw_spec.output).strip() if raw_spec.output else ""
+        if not output_name:
+            harmonic_suffix = f"{int(harmonic) if harmonic is not None else 1}w"
+            readout_suffix = resolved_readout.replace(",", "_")
+            output_name = f"{step.name}_{channel.lower()}_{harmonic_suffix}_{readout_suffix}"
+        transform = str(raw_spec.transform).strip() if raw_spec.transform else ""
+        if not transform:
+            if source_mode == "ac" and resolved_mode != "dc" and (harmonic in (None, 1)) and "x" in resolved_readout.split(","):
+                transform = "lockin_x_over_current"
+            else:
+                transform = "raw"
+        outputs_from_specs[channel] = {"name": output_name, "transform": transform}
     return channels, resolved_specs, outputs_from_specs
 
 

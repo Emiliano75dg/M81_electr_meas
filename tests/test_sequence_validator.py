@@ -290,6 +290,67 @@ def test_phase_diagnostic_accepts_multi_readout_string():
     assert resolved[0].readout == "x,y,r,theta"
 
 
+def test_measure_specs_missing_output_generates_stable_output_name(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "auto_output",
+            "defaults": {
+                "source_mode": "ac",
+                "source": "S1",
+                "source_value": 1e-5,
+                "frequency_hz": 13.7,
+            },
+            "steps": [
+                {
+                    "name": "ab_dc",
+                    "state": "I_AB_V_DC",
+                    "measure_specs": {
+                        "M1": {
+                            "measure_mode": "lockin",
+                            "harmonic": 1,
+                            "readout": "x",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    assert resolved[0].outputs["M1"].name == "ab_dc_m1_1w_x"
+    assert resolved[0].outputs["M1"].transform == "lockin_x_over_current"
+
+
+def test_measure_specs_missing_transform_defaults_to_raw_when_not_inferable(tmp_path):
+    sequence = _write_sequence(
+        tmp_path,
+        {
+            "name": "raw_default",
+            "defaults": {
+                "source_mode": "ac",
+                "source": "S1",
+                "source_value": 1e-5,
+                "frequency_hz": 13.7,
+            },
+            "steps": [
+                {
+                    "name": "ab_dc",
+                    "state": "I_AB_V_DC",
+                    "measure_specs": {
+                        "M2": {
+                            "measure_mode": "lockin",
+                            "harmonic": 2,
+                            "readout": "x",
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    resolved = validate_measurement_sequence(sequence, _contact_map())
+    assert resolved[0].outputs["M2"].transform == "raw"
+
+
 def test_invalid_channel_rejected_via_capabilities(tmp_path):
     sequence = _write_sequence(
         tmp_path,
